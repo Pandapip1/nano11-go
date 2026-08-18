@@ -1,0 +1,369 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/Pandapip1/gowim/wim"
+)
+
+// winREStubIncludePaths lists the real winre.wim subtrees grafted into the
+// donor-based stub, in the order they were added while bisecting Setup's
+// SafeOS failures against real setuperr.log evidence (see the winRE
+// handling's doc comment): each entry here is a real path Setup's SafeOS
+// unmount step (CUnmountWIM/SPCopyFilesAndFolders) was confirmed to require
+// by a real install attempt failing with 0x80070003 ("failed to get file
+// attributes on source path ...") when it was missing, not a guess.
+var winREStubIncludePaths = []string{
+	`Windows\Boot`,
+}
+
+// winREStubFromDonor builds a single-image, bootable-flagged WIM stub,
+// grafting real subtrees (winREStubIncludePaths) copied byte-for-byte out of
+// a real winre.wim (donorPath) rather than leaving the root entirely empty.
+// Two things confirmed via real install attempts, not guessed, went into
+// this shape: (1) the XML data resource must be real, minimal well-formed
+// <WIM><IMAGE INDEX="1">...</IMAGE></WIM> text -- Setup's SafeOS mount step
+// (wimgapi) rejected an empty XMLData.Document outright with
+// "0x8007000D", even though the WIM was otherwise structurally valid; (2)
+// a structurally valid but content-empty stub mounts fine but then fails
+// when Setup's SafeOS unmount step tries to copy real files back out of it
+// ("0x80070003", path not found) -- so real content, added back
+// incrementally per winREStubIncludePaths, is genuinely required.
+func winREStubFromDonor(donorPath string) ([]byte, error) {
+	f, err := os.Open(donorPath)
+	if err != nil {
+		return nil, fmt.Errorf("open winre donor %s: %w", donorPath, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	donor, err := wim.NewReader(f, fi.Size())
+	if err != nil {
+		return nil, fmt.Errorf("read winre donor %s: %w", donorPath, err)
+	}
+	donorBT, err := donor.BlobTable()
+	if err != nil {
+		return nil, err
+	}
+	metaResources := donorBT.MetadataResources()
+	if len(metaResources) == 0 {
+		return nil, fmt.Errorf("winre donor %s has no images", donorPath)
+	}
+	donorMeta, err := donor.ImageMetadata(metaResources[0])
+	if err != nil {
+		return nil, err
+	}
+
+	// remapper carries SecurityID remapping state across every grafted
+	// subtree (currently just one, but built to extend), so a descriptor
+	// referenced by more than one path collapses to a single output index
+	// rather than being duplicated -- see wim.SecurityRemapper.
+	remapper := wim.NewSecurityRemapper()
+	newRoot := &wim.DirEntry{Attributes: wim.FileAttributeDirectory, SecurityID: wim.SecurityIDNone, Streams: []wim.Stream{{}}}
+	for _, p := range winREStubIncludePaths {
+		entry, err := donorMeta.Root.Lookup(p)
+		if err != nil {
+			return nil, fmt.Errorf("lookup %s in winre donor %s: %w", p, donorPath, err)
+		}
+		copied := remapper.Copy(entry)
+		if err := wim.AttachAt(newRoot, p, copied); err != nil {
+			return nil, fmt.Errorf("attach %s in winre stub: %w", p, err)
+		}
+	}
+
+	images := []*wim.ImageMetadata{{Security: remapper.BuildSecurityData(donorMeta.Security), Root: newRoot}}
+	bt, err := wim.RebuildBlobTable(images, donorBT)
+	if err != nil {
+		return nil, fmt.Errorf("rebuild blob table for winre stub: %w", err)
+	}
+
+	// A structurally valid but content-empty <IMAGE> element (tried and
+	// fixed here) is not enough either: two independent investigations (a
+	// clean-room disassembly of the exact wimgapi.dll extracted from this
+	// project's own failing VM, and separately reading wimlib's own
+	// xml_add_image()/xml_update_image_info() source) converged on the
+	// same real bug. Windows Setup's SafeOS commit path
+	// (WIMCommitImageHandle -> StateStoreGetMountedImageTime,
+	// mountedimagestore.c line 985) reads back an "Image time low"
+	// registry DWORD it wrote at mount time from the image's own
+	// <LASTMODIFICATIONTIME> XML; its registry-read helper returns the
+	// value itself in eax and signals errors only via SetLastError, but
+	// the caller treats a returned value of exactly 0 as failure. An
+	// <IMAGE> element with no <LASTMODIFICATIONTIME> resolves to that same
+	// 0 and gets misread as a commit failure (0x80004005/E_FAIL), aborting
+	// Setup right after the real content graft above got it past mount
+	// and file-copy.
+	//
+	// Base the stub's XML on the donor's own real <IMAGE INDEX="1">
+	// element (NAME, WINDOWS, real CREATIONTIME, ...) instead of a bare
+	// hand-written one, dropping only <RESOURCES> (whose <OFFSET> values
+	// point into the donor file, meaningless for the new one) -- then run
+	// wim.RecomputeXMLStats (gowim), mirroring wimlib's own
+	// xml_update_image_info(), to refresh DIRCOUNT/FILECOUNT/TOTALBYTES/
+	// HARDLINKBYTES/LASTMODIFICATIONTIME for the actually-grafted subtree.
+	// RecomputeXMLStats leaves an already-present CREATIONTIME untouched,
+	// so the donor's real creation time survives.
+	donorImageXML, err := donorImageXML(donor)
+	if err != nil {
+		return nil, fmt.Errorf("read winre donor XML: %w", err)
+	}
+	xmlData, err := wim.RecomputeXMLStats(donorImageXML, images, bt, wimTimestampNow())
+	if err != nil {
+		return nil, fmt.Errorf("recompute winre stub XML stats: %w", err)
+	}
+	return wim.Assemble(images, bt, xmlData, wim.NewReaderBlobSource(donor, donorBT), wim.WriteOptions{
+		CompressionType: wim.HdrFlagCompressLZX,
+		ChunkSize:       32768,
+		BootIndex:       1,
+		GUID:            randomGUID(),
+	})
+}
+
+// donorImageXML returns a single-image <WIM><IMAGE INDEX="1">...</IMAGE>
+// </WIM> document copied from the donor's own real image 1 XML, with
+// <RESOURCES> stripped (its <OFFSET>/<SIZE> entries describe byte
+// positions in the donor file, which are meaningless -- and, since the stub
+// is far smaller, likely out of bounds -- in the new one).
+func donorImageXML(donor *wim.Reader) (*wim.XMLData, error) {
+	xmlData, err := donor.XMLData()
+	if err != nil {
+		return nil, err
+	}
+	var root struct {
+		Image struct {
+			Index int    `xml:"INDEX,attr"`
+			Inner string `xml:",innerxml"`
+		} `xml:"IMAGE"`
+	}
+	if err := xml.Unmarshal([]byte(xmlData.Document), &root); err != nil {
+		return nil, fmt.Errorf("parse donor XML: %w", err)
+	}
+
+	dec := xml.NewDecoder(strings.NewReader(root.Image.Inner))
+	var kept strings.Builder
+	for {
+		start := dec.InputOffset()
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse donor <IMAGE> content: %w", err)
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if err := dec.Skip(); err != nil {
+			return nil, err
+		}
+		end := dec.InputOffset()
+		if se.Name.Local == "RESOURCES" {
+			continue
+		}
+		kept.WriteString(root.Image.Inner[start:end])
+	}
+	return &wim.XMLData{Document: `<WIM><IMAGE INDEX="1">` + kept.String() + `</IMAGE></WIM>`}, nil
+}
+
+// wimTimestampNow returns the current time as a Windows FILETIME (100ns
+// ticks since 1601-01-01 UTC), the same convention wim.RecomputeXMLStats and
+// DirEntry's own CreationTime/LastWriteTime fields use.
+func wimTimestampNow() uint64 {
+	const epochDelta = 116444736000000000 // 1601-01-01 to 1970-01-01, in 100ns ticks
+	return uint64(time.Now().UnixNano()/100) + epochDelta
+}
+
+// randomGUID generates a real random GUID for wim.WriteOptions.GUID, which
+// must be explicitly set to a nonzero value (WriteTo/Assemble no longer
+// generate one themselves).
+func randomGUID() wim.GUID {
+	var g wim.GUID
+	if _, err := rand.Read(g[:]); err != nil {
+		// crypto/rand.Read on a real OS reader essentially never fails;
+		// falling through to the zero GUID would just make WriteTo/
+		// Assemble reject it outright with a clear error instead of
+		// silently misbehaving.
+		panic(fmt.Sprintf("randomGUID: %v", err))
+	}
+	return g
+}
+
+const (
+	winDir           = `Windows`
+	driverRepoDir    = winDir + `\System32\DriverStore\FileRepository`
+	fontsDir         = winDir + `\Fonts`
+	tasksDir         = winDir + `\System32\Tasks`
+	edgeWebViewDir   = winDir + `\System32\Microsoft-Edge-Webview`
+	recoveryWimPath  = winDir + `\System32\Recovery\winre.wim`
+	oneDriveSetupExe = winDir + `\System32\OneDriveSetup.exe`
+	edgeProgramFiles = `Program Files (x86)\Microsoft`
+)
+
+// driverStoreRemovePatterns is nano11builder.ps1's $patternsToRemove for
+// "slimming the DriverStore" -- non-essential driver classes (printers,
+// scanners, multi-function devices, smartcard readers, tape drives, RDP
+// virtual bus, Bluetooth PAN).
+var driverStoreRemovePatterns = []string{
+	"prn*", "scan*", "mfd*", "wscsmd.inf*", "tapdrv*", "rdpbus.inf*", "tdibth.inf*",
+}
+
+// fontsKeepPatterns/fontsExtraRemove are nano11builder.ps1's font-pruning
+// pair: first everything NOT matching a keep pattern is deleted, then a
+// further explicit list is deleted even though some of those names
+// (segoeuihistoric.ttf) would otherwise have matched a keep pattern.
+var fontsKeepPatterns = []string{
+	"segoe*.*", "tahoma*.*", "marlett.ttf", "8541oem.fon", "segui*.*",
+	"consol*.*", "lucon*.*", "calibri*.*", "arial*.*", "times*.*", "cou*.*", "8*.*",
+}
+var fontsExtraRemove = []string{
+	"mingli*", "msjh*", "msyh*", "malgun*", "meiryo*", "yugoth*", "segoeuihistoric.ttf",
+}
+
+// inputMethodDirsToRemove are the CJK IME resource directories
+// nano11builder.ps1 deletes outright (Windows\System32\InputMethod\<X>).
+var inputMethodDirsToRemove = []string{"CHS", "CHT", "JPN", "KOR"}
+
+// runAggressiveFileCleanup ports nano11builder.ps1's "Performing aggressive
+// manual file deletions" section (lines ~166-206) plus the native-image
+// and scheduled-task deletions around it: DriverStore slimming, font
+// pruning, speech engine/Defender-definition/InputMethod/Temp/Web/Help/
+// Cursors removal, Edge + Edge WebView + WinRE + OneDriveSetup.exe
+// removal, precompiled .NET native images, and specific scheduled-task
+// definition files. Every step is best-effort (matches the PS script's own
+// pervasive -ErrorAction SilentlyContinue): a missing file/folder is not
+// an error.
+// winREMode selects what runAggressiveFileCleanup does to winre.wim -- see
+// its call site's doc comment for why this isn't just a bool.
+type winREMode int
+
+const (
+	winREKeep winREMode = iota
+	winREDonorStub
+)
+
+func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs map[wim.Hash][]byte, arch string, winRE winREMode, winREDonorPath string) error {
+	fmt.Println("Removing pre-compiled .NET assemblies (Native Images)...")
+	if err := removeMatchingChildren(root, bt, winDir+`\assembly`, []string{"NativeImages_*"}, "native images"); err != nil {
+		return err
+	}
+
+	fmt.Println("Slimming the DriverStore...")
+	if err := removeMatchingChildren(root, bt, driverRepoDir, driverStoreRemovePatterns, "driverstore"); err != nil {
+		return err
+	}
+
+	fmt.Println("Pruning fonts...")
+	if err := keepOnlyMatchingChildren(root, bt, fontsDir, fontsKeepPatterns, "fonts (keep-list)"); err != nil {
+		return err
+	}
+	if err := removeMatchingChildren(root, bt, fontsDir, fontsExtraRemove, "fonts (extra remove)"); err != nil {
+		return err
+	}
+
+	mustRemove := []string{
+		winDir + `\Speech\Engines\TTS`,
+		`ProgramData\Microsoft\Windows Defender\Definition Updates`,
+		winDir + `\Temp`,
+		winDir + `\Web`,
+		winDir + `\Help`,
+		winDir + `\Cursors`,
+		edgeWebViewDir,
+		oneDriveSetupExe,
+	}
+	for _, im := range inputMethodDirsToRemove {
+		mustRemove = append(mustRemove, winDir+`\System32\InputMethod\`+im)
+	}
+	for _, path := range mustRemove {
+		if err := removeIfExists(root, bt, path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+
+	fmt.Println("Removing Edge (Program Files (x86)\\Microsoft\\Edge*)...")
+	if err := removeMatchingChildren(root, bt, edgeProgramFiles, []string{"Edge*"}, "edge"); err != nil {
+		return err
+	}
+
+	fmt.Println("Removing Edge WebView WinSxS component...")
+	if err := removeMatchingChildren(root, bt, `Windows\WinSxS`,
+		[]string{arch + "_microsoft-edge-webview_31bf3856ad364e35*"}, "edge webview winsxs"); err != nil {
+		return err
+	}
+
+	// nano11builder.ps1 (the real PowerShell script this port mirrors)
+	// deletes winre.wim and recreates it as a zero-byte placeholder file in
+	// the same spot. That empty-but-present file breaks a real clean
+	// install driven by Setup.exe (as opposed to a raw WinPE dism
+	// /apply-image): Setup's SafeOS phase stages it to
+	// C:\$WINDOWS.~BT\Sources\SafeOS\winre.wim and tries to mount it to
+	// build the recovery/rollback environment, which fails against a
+	// 0-byte file (0x8007000B, "the data is invalid") and aborts Setup
+	// entirely -- matching real, independent tiny11builder GitHub reports
+	// of the same SafeOS/winre.wim failure after this exact trick
+	// (ntdevlabs/tiny11builder issues #121 and discussion #466).
+	//
+	// Deleting the entry outright instead of stubbing it is NOT safer
+	// (tried and removed as an option here, not just theorized): confirmed
+	// via a real install attempt's setuperr.log, Setup's SafeOS phase
+	// unconditionally tries to *extract*
+	// \Windows\System32\Recovery\winre.wim out of install.wim before it
+	// ever gets to mounting anything, and fails just as hard when the file
+	// is simply missing (CExtractFilesFromWIM::DoExecute, error
+	// 0x80070003, "the system cannot find the path specified").
+	//
+	// A structurally valid but content-empty stub (tried and removed as an
+	// option here) is NOT sufficient either, for two reasons confirmed via
+	// real install attempts, in order:
+	//  1. An empty XMLData.Document (wim.Assemble's own zero value) made
+	//     Setup's SafeOS mount step itself fail: "Failed to open WIM file
+	//     ... Error: 0x8007000D" -- a real WIM's XML data is never empty,
+	//     and wimgapi's mount path evidently parses it.
+	//  2. Even with well-formed XML, mounting succeeds but Setup's SafeOS
+	//     unmount step then fails trying to copy files back OUT of the
+	//     mounted image: "SPCopyFilesAndFolders: Failed to get file
+	//     attributes on source path C:\$WINDOWS.~BT\Sources\SafeOS\SafeOS
+	//     .Mount\WINDOWS\Boot. hr = 0x80070003" -- an empty root has no
+	//     such path. This is exactly the bisection this project's user
+	//     asked for: graft real content from a genuine winre.wim back in,
+	//     incrementally, until Setup stops asking for more (see
+	//     winREStubFromDonor/winREStubIncludePaths) rather than guessing
+	//     everything needed up front.
+	switch winRE {
+	case winREKeep:
+		fmt.Println("Skipping winre.wim removal (unsafe before a Setup.exe-driven install by default -- see comment, pass -winre-mode to opt into an alternative)")
+	case winREDonorStub:
+		fmt.Printf("Replacing winre.wim with a stub grafted from %s (-winre-mode=donor-stub; bisection in progress, see comment)...\n", winREDonorPath)
+		stub, err := winREStubFromDonor(winREDonorPath)
+		if err != nil {
+			return fmt.Errorf("build donor winre.wim stub: %w", err)
+		}
+		if err := writeFile(root, bt, newBlobs, recoveryWimPath, stub); err != nil {
+			return fmt.Errorf("write donor winre.wim stub: %w", err)
+		}
+	}
+
+	fmt.Println("Deleting scheduled task definition files...")
+	taskFiles := []string{
+		tasksDir + `\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser`,
+		tasksDir + `\Microsoft\Windows\Customer Experience Improvement Program`,
+		tasksDir + `\Microsoft\Windows\Application Experience\ProgramDataUpdater`,
+		tasksDir + `\Microsoft\Windows\Chkdsk\Proxy`,
+		tasksDir + `\Microsoft\Windows\Windows Error Reporting\QueueReporting`,
+	}
+	for _, path := range taskFiles {
+		if err := removeIfExists(root, bt, path); err != nil {
+			return fmt.Errorf("remove task %s: %w", path, err)
+		}
+	}
+
+	return nil
+}

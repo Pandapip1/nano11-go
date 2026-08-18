@@ -1,0 +1,8 @@
+/nano11-go
+/diag/diag
+*.iso
+*.qcow2
+/disk_check.txt
+/iso_check.txt
+/scratch_listing.txt
+/scratch_usage.txt
