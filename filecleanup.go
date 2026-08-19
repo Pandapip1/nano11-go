@@ -216,6 +216,36 @@ const (
 // virtual bus, Bluetooth PAN).
 var driverStoreRemovePatterns = []string{
 	"prn*", "scan*", "mfd*", "wscsmd.inf*", "tapdrv*", "rdpbus.inf*", "tdibth.inf*",
+
+	// Beyond the PS1's list. Measured against a real retail Windows 11
+	// 25H2 (build 26200) Pro image: after its seven patterns above run,
+	// 444.8 MB of DriverStore across 698 driver families still remains.
+	// These three groups are the largest pieces of that which the PS1
+	// plainly meant to catch but does not:
+	//
+	//   ntprint / ntprint4   30.9 MB -- ntprint.inf IS the inbox printer
+	//       driver, the single biggest printing payload in the image, and
+	//       it does not match "prn*". Removing printer drivers is already
+	//       the stated intent of prn*/scan*/mfd*.
+	//   helloface            71.8 MB -- the Windows Hello face-recognition
+	//       biometric driver. packagePatterns already removes the
+	//       Hello-Face servicing package, so leaving its driver behind
+	//       just strands the payload of an already-disabled feature.
+	//   mdm*                 14.5 MB -- 152 legacy dialup modem driver
+	//       families (mdmcpq, mdmsupra, mdmgl00*, ...). Verified that all
+	//       152 matches really are modem drivers and that no non-modem
+	//       family in the image begins with "md", so the glob is not
+	//       overreaching. Same legacy-hardware class as the PS1's own
+	//       tapdrv* (tape drives).
+	//
+	// Deliberately NOT included: the vendor Wi-Fi (213.2 MB across 25
+	// families) and wired-NIC (64.2 MB across 19) drivers, which are by
+	// far the largest remaining block. Cutting those is a different kind
+	// of decision from cutting bloat -- it removes hardware enablement, so
+	// a machine whose NIC is not one of the few left would come up with no
+	// network at all, including during OOBE. Left for an explicit opt-in
+	// rather than folded in silently.
+	"ntprint.inf*", "ntprint4.inf*", "helloface.inf*", "mdm*",
 }
 
 // fontsKeepPatterns/fontsExtraRemove are nano11builder.ps1's font-pruning
@@ -233,6 +263,10 @@ var fontsExtraRemove = []string{
 // inputMethodDirsToRemove are the CJK IME resource directories
 // nano11builder.ps1 deletes outright (Windows\System32\InputMethod\<X>).
 var inputMethodDirsToRemove = []string{"CHS", "CHT", "JPN", "KOR"}
+
+// imeDirsToRemove are the CJK trees under Windows\System32\IME, the second
+// input-method payload the PS1 leaves behind entirely (see the call site).
+var imeDirsToRemove = []string{"IMEJP", "IMETC", "IMEKR"}
 
 // runAggressiveFileCleanup ports nano11builder.ps1's "Performing aggressive
 // manual file deletions" section (lines ~166-206) plus the native-image
@@ -293,6 +327,25 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		winDir + `\Speech\Engines\SR`,
 		winDir + `\Speech_OneCore\Engines`,
 
+		// There is a third and fourth copy of the speech engines under
+		// System32 (7.3 MB together). The sapi.dll / sapi_onecore.dll
+		// runtimes beside them are deliberately left alone -- ordinary
+		// applications link against those, and this is only meant to cut
+		// the voice/recognition data, not break the API surface.
+		winDir + `\System32\Speech\Engines`,
+		winDir + `\System32\Speech_OneCore\Engines`,
+
+		// Windows Hello, dropped at the user's request. The face-recognition
+		// biometric driver itself (71.8 MB) goes via driverStoreRemovePatterns
+		// above, and the Hello-Face / BioEnrollment-UX servicing packages go
+		// via packagePatterns; these are the two remaining on-disk pieces.
+		// The scattered System32 ngc*/webauthn DLLs are deliberately left in
+		// place: they total only a few MB and are wired into the credential
+		// provider chain, so pulling individual DLLs out from under logon is
+		// a poor trade for the size.
+		winDir + `\SystemApps\Microsoft.BioEnrollment_cw5n1h2txyewy`,
+		winDir + `\System32\WinBioPlugIns`,
+
 		// Defender Advanced Threat Protection (the "Sense" agent) and the
 		// rest of the Program Files-side Defender payload: 302 MB unique
 		// by the same measurement, of which 153 MB is the Classification
@@ -314,6 +367,17 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	}
 	for _, im := range inputMethodDirsToRemove {
 		mustRemove = append(mustRemove, winDir+`\System32\InputMethod\`+im)
+	}
+	// The PS1 removes System32\InputMethod\{CHS,CHT,JPN,KOR} but leaves the
+	// separate System32\IME tree, which is 27.9 MB of the same CJK input
+	// method payload: IMEJP 13.4 MB (Japanese), IMETC 4.3 MB (Traditional
+	// Chinese), IMEKR 2.9 MB (Korean), and a 7.3 MB SHARED directory. Cut
+	// the three language trees for consistency with the InputMethod
+	// removal above and with the CJK IME package/AppX removal; SHARED is
+	// left in place as cheap insurance, since 7.3 MB is not worth guessing
+	// about what else might link against it.
+	for _, ime := range imeDirsToRemove {
+		mustRemove = append(mustRemove, winDir+`\System32\IME\`+ime)
 	}
 	for _, path := range mustRemove {
 		if err := removeIfExists(root, bt, path); err != nil {
