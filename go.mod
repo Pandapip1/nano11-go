@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/Pandapip1/gowim/appx v0.0.0
 	github.com/Pandapip1/gowim/component v0.0.0
+	github.com/Pandapip1/gowim/lzx v0.0.0
 	github.com/Pandapip1/gowim/regf v0.0.0
 	github.com/Pandapip1/gowim/registry v0.0.0
 	github.com/Pandapip1/gowim/service v0.0.0
@@ -13,7 +14,6 @@ require (
 
 require (
 	github.com/Pandapip1/gowim/lzms v0.0.0 // indirect
-	github.com/Pandapip1/gowim/lzx v0.0.0 // indirect
 	github.com/Pandapip1/gowim/mum v0.0.0 // indirect
 	github.com/Pandapip1/gowim/pa30 v0.0.0 // indirect
 	github.com/Pandapip1/gowim/xpress v0.0.0 // indirect

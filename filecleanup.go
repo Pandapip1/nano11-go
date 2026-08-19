@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Pandapip1/gowim/lzx"
 	"github.com/Pandapip1/gowim/wim"
 )
 
@@ -35,7 +36,7 @@ var winREStubIncludePaths = []string{
 // when Setup's SafeOS unmount step tries to copy real files back out of it
 // ("0x80070003", path not found) -- so real content, added back
 // incrementally per winREStubIncludePaths, is genuinely required.
-func winREStubFromDonor(donorPath string) ([]byte, error) {
+func winREStubFromDonor(donorPath string, lzxOpts lzx.Options) ([]byte, error) {
 	f, err := os.Open(donorPath)
 	if err != nil {
 		return nil, fmt.Errorf("open winre donor %s: %w", donorPath, err)
@@ -124,6 +125,7 @@ func winREStubFromDonor(donorPath string) ([]byte, error) {
 		ChunkSize:       32768,
 		BootIndex:       1,
 		GUID:            randomGUID(),
+		LZXOptions:      lzxOpts,
 	})
 }
 
@@ -250,7 +252,7 @@ const (
 	winREDonorStub
 )
 
-func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs map[wim.Hash][]byte, arch string, winRE winREMode, winREDonorPath string) error {
+func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs map[wim.Hash][]byte, arch string, winRE winREMode, winREDonorPath string, lzxOpts lzx.Options) error {
 	fmt.Println("Removing pre-compiled .NET assemblies (Native Images)...")
 	if err := removeMatchingChildren(root, bt, winDir+`\assembly`, []string{"NativeImages_*"}, "native images"); err != nil {
 		return err
@@ -342,7 +344,7 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		fmt.Println("Skipping winre.wim removal (unsafe before a Setup.exe-driven install by default -- see comment, pass -winre-mode to opt into an alternative)")
 	case winREDonorStub:
 		fmt.Printf("Replacing winre.wim with a stub grafted from %s (-winre-mode=donor-stub; bisection in progress, see comment)...\n", winREDonorPath)
-		stub, err := winREStubFromDonor(winREDonorPath)
+		stub, err := winREStubFromDonor(winREDonorPath, lzxOpts)
 		if err != nil {
 			return fmt.Errorf("build donor winre.wim stub: %w", err)
 		}

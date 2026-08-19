@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Pandapip1/gowim/lzx"
 	"github.com/Pandapip1/gowim/registry"
 	"github.com/Pandapip1/gowim/service"
 	"github.com/Pandapip1/gowim/wim"
@@ -36,7 +37,7 @@ import (
 // 25H2 boot.wim, see TODO.md). Both are genuine wins once a re-encode is
 // already happening for another reason; neither is worth forcing a
 // re-encode on its own merits alone.
-func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim bool) error {
+func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim bool, lzxOpts lzx.Options) error {
 	f, err := os.Open(bootWimPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", bootWimPath, err)
@@ -70,7 +71,7 @@ func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim bo
 	chunkSize := r.Header().ChunkSize
 
 	tmpExport := outPath + ".export.tmp"
-	if err := exportBootSetupImage(r, bt, xmlData, tmpExport, ctype, chunkSize); err != nil {
+	if err := exportBootSetupImage(r, bt, xmlData, tmpExport, ctype, chunkSize, lzxOpts); err != nil {
 		return fmt.Errorf("export setup image from %s: %w", bootWimPath, err)
 	}
 	defer os.Remove(tmpExport)
@@ -152,6 +153,7 @@ func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim bo
 		ChunkSize:       chunkSize,
 		BootIndex:       1,
 		GUID:            randomGUID(),
+		LZXOptions:      lzxOpts,
 	})
 	if err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
@@ -163,7 +165,7 @@ func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim bo
 // boot.wim to dest, preserving the source's own compression type/chunk
 // size (matching the PS1 script's first export pass, which passes no
 // /compress flag at all).
-func exportBootSetupImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData, dest string, ctype wim.CompressionType, chunkSize uint32) error {
+func exportBootSetupImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData, dest string, ctype wim.CompressionType, chunkSize uint32, lzxOpts lzx.Options) error {
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
@@ -174,6 +176,7 @@ func exportBootSetupImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData
 		CompressionType: ctype,
 		ChunkSize:       chunkSize,
 		GUID:            randomGUID(),
+		LZXOptions:      lzxOpts,
 	})
 	return err
 }

@@ -40,6 +40,13 @@
 // re-encode that keeps everything), both the image-drop and the locale/
 // WinSxS trim are genuine, verified size wins. See TODO.md for the exact
 // numbers and the QEMU/OVMF boot verification this was based on.
+//
+// Every WIM this tool writes is LZX-compressed through gowim's pure-Go
+// encoder, and that encoder's speed/ratio tradeoff is selectable with
+// -lzx-preset (default "fast"). It is worth understanding before starting a
+// run: a full pass re-encodes the whole image twice (the export pass, then
+// the final write), so the preset, not the debloat work, is what sets the
+// wall time. See the flag's own help text for the measured ladder.
 package main
 
 import (
@@ -48,6 +55,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/Pandapip1/gowim/lzx"
 	"github.com/Pandapip1/gowim/registry"
 	"github.com/Pandapip1/gowim/wim"
 )
@@ -69,6 +77,44 @@ type stageFlags struct {
 	bootWimOutPath     string
 	skipBootRegTweaks  bool
 	skipBootLocaleTrim bool
+	// lzx selects the LZX encoder's speed/compression-ratio tradeoff for
+	// every WIM this tool writes (see lzxPresetFlag). It is a stage flag
+	// rather than a constant because it is the single largest determinant
+	// of a run's wall time.
+	lzx lzx.Options
+}
+
+// lzxPresetFlag adapts the gowim lzx package's preset ladder to flag.Value
+// so -lzx-preset can take a name instead of the individual tunables (which
+// are deliberately not exposed here: the presets are measured points, ad-hoc
+// combinations are not).
+type lzxPresetFlag struct {
+	opts *lzx.Options
+	name *string
+}
+
+func (f lzxPresetFlag) String() string {
+	if f.name == nil {
+		return "fast"
+	}
+	return *f.name
+}
+
+func (f lzxPresetFlag) Set(s string) error {
+	presets := map[string]func() lzx.Options{
+		"fastest":  lzx.Fastest,
+		"fast":     lzx.Fast,
+		"balanced": lzx.Balanced,
+		"default":  lzx.DefaultOptions,
+		"max":      lzx.Max,
+	}
+	p, ok := presets[s]
+	if !ok {
+		return fmt.Errorf("invalid -lzx-preset %q (want fastest, fast, balanced, default or max)", s)
+	}
+	*f.opts = p()
+	*f.name = s
+	return nil
 }
 
 // winREModeFlag adapts winREMode to flag.Value so -winre-mode can take a
@@ -116,14 +162,34 @@ func main() {
 	flag.StringVar(&stages.bootWimOutPath, "boot-wim-out", "", "path to write the shrunk boot.wim (required if -boot-wim is set)")
 	flag.BoolVar(&stages.skipBootRegTweaks, "skip-boot-regtweaks", false, "skip the requirement-bypass/BitLocker registry tweaks applied to boot.wim's setup image")
 	flag.BoolVar(&stages.skipBootLocaleTrim, "skip-boot-locale-trim", false, "skip removing non-en-US locale directories and their owning WinSxS packages from boot.wim's setup image")
+	// Default "fast", not gowim's own ratio-first default: this tool's
+	// workload is re-encoding multi-gigabyte images end to end (the
+	// install.wim export pass alone re-encodes every blob of a ~7.4 GB
+	// image, and the final write does it again), where the measured
+	// tradeoff is lopsided. Measured 2026-08-18 on a 24-core x86-64
+	// machine over a 4 MiB corpus compressed in 32 KiB chunks across all
+	// cores (gowim lzx.Options's own doc has the corpus and full ladder):
+	// fast 13.8 MB/s, balanced 2.94 MB/s (+0.52% size vs default),
+	// default 0.511 MB/s, max 0.202 MB/s (-0.06%). Projected onto the real
+	// 7.4 GB install.wim export that is ~20-30 min at fast against ~4 h at
+	// default and ~10 h at max, for 2.87% more output.
+	lzxPresetName := "fast"
+	stages.lzx = lzx.Fast()
+	flag.Var(lzxPresetFlag{&stages.lzx, &lzxPresetName}, "lzx-preset",
+		"LZX encoder speed/size tradeoff for every WIM written: fastest, fast (default), balanced, default or max. "+
+			"Measured 2026-08-18 (24-core, 4 MiB corpus, 32 KiB chunks, all cores): fast 13.8 MB/s at +2.87% output size, "+
+			"balanced 2.94 MB/s at +0.52%, default 0.511 MB/s, max 0.202 MB/s at -0.06%. "+
+			"For the real 7.4 GB install.wim export that is roughly 20-30 min (fast) vs ~1.5-2 h (balanced) vs ~4 h (default) vs ~10 h (max) of compression; "+
+			"pick balanced or default when output size matters more than turnaround")
 	flag.Parse()
+	fmt.Printf("LZX preset: %s\n", lzxPresetName)
 
 	if stages.bootWimPath != "" {
 		if stages.bootWimOutPath == "" {
 			log.Fatal("-boot-wim-out is required when -boot-wim is given")
 		}
 		fmt.Println("--- Shrinking boot.wim to just the setup image ---")
-		if err := shrinkBootWim(stages.bootWimPath, stages.bootWimOutPath, stages.skipBootRegTweaks, stages.skipBootLocaleTrim); err != nil {
+		if err := shrinkBootWim(stages.bootWimPath, stages.bootWimOutPath, stages.skipBootRegTweaks, stages.skipBootLocaleTrim, stages.lzx); err != nil {
 			log.Fatalf("shrink boot.wim: %v", err)
 		}
 		fmt.Printf("Wrote shrunk boot.wim to %s\n", stages.bootWimOutPath)
@@ -191,7 +257,7 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 	tmpExport := outPath + ".export.tmp"
 	if fi, err := os.Stat(tmpExport); err == nil && fi.Size() > 0 {
 		fmt.Printf("reusing existing export at %s\n", tmpExport)
-	} else if err := exportImage(r, bt, xmlData, imageIndex, tmpExport); err != nil {
+	} else if err := exportImage(r, bt, xmlData, imageIndex, tmpExport, stages.lzx); err != nil {
 		return fmt.Errorf("export image %d: %w", imageIndex, err)
 	}
 
@@ -276,7 +342,7 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 		fmt.Println("--- Skipping aggressive file cleanup (-skip-filecleanup) ---")
 	} else {
 		fmt.Println("--- Performing aggressive manual file deletions ---")
-		if err := runAggressiveFileCleanup(root, bt2, newBlobs, arch, stages.winRE, stages.winREDonorPath); err != nil {
+		if err := runAggressiveFileCleanup(root, bt2, newBlobs, arch, stages.winRE, stages.winREDonorPath, stages.lzx); err != nil {
 			return fmt.Errorf("file cleanup: %w", err)
 		}
 	}
@@ -355,6 +421,7 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 		ChunkSize:       32768,
 		BootIndex:       1,
 		GUID:            randomGUID(),
+		LZXOptions:      stages.lzx,
 	})
 	if err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
@@ -364,7 +431,7 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 	return nil
 }
 
-func exportImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData, index int, dest string) error {
+func exportImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData, index int, dest string, lzxOpts lzx.Options) error {
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
@@ -374,6 +441,7 @@ func exportImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData, index i
 		CompressionType: wim.HdrFlagCompressLZX,
 		ChunkSize:       32768,
 		GUID:            randomGUID(),
+		LZXOptions:      lzxOpts,
 	})
 	return err
 }
