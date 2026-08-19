@@ -347,6 +347,19 @@ var fontsKeepPatterns = []string{
 	"segoe*.*", "tahoma*.*", "marlett.ttf", "8541oem.fon", "segui*.*",
 	"consol*.*", "lucon*.*", "calibri*.*", "arial*.*", "times*.*", "cou*.*", "8*.*",
 }
+// bootFontRemovePatterns are the CJK boot-manager fonts under
+// Windows\Boot\Fonts and Windows\Boot\Fonts_EX: 24.5 MB of the 27.5 MB
+// those two directories hold. They exist so the boot manager and BitLocker
+// recovery screens can render Chinese, Japanese and Korean text, which an
+// image that has already had every CJK IME, language feature and input
+// method removed has no use for. The Latin boot fonts (segoe_slboot,
+// wgl4_boot, ...) are left alone -- those are what actually draws the boot
+// UI on this build.
+var bootFontRemovePatterns = []string{
+	"chs_boot*", "cht_boot*", "jpn_boot*", "kor_boot*",
+	"malgun_boot*", "msjh_boot*", "msyh_boot*",
+}
+
 var fontsExtraRemove = []string{
 	"mingli*", "msjh*", "msyh*", "malgun*", "meiryo*", "yugoth*", "segoeuihistoric.ttf",
 }
@@ -391,6 +404,13 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	fmt.Println("Removing vendor network adapter drivers (no NIC support for unlisted hardware)...")
 	if err := removeMatchingChildren(root, bt, driverRepoDir, vendorNICRemovePatterns, "driverstore (vendor NICs)"); err != nil {
 		return err
+	}
+
+	fmt.Println("Pruning CJK boot fonts...")
+	for _, dir := range []string{winDir + `\Boot\Fonts`, winDir + `\Boot\Fonts_EX`} {
+		if err := removeMatchingChildren(root, bt, dir, bootFontRemovePatterns, "boot fonts"); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println("Pruning fonts...")
@@ -474,6 +494,29 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		winDir + `\SysWOW64\edgehtml.dll`,
 		winDir + `\System32\mshtml.dll`,
 		winDir + `\SysWOW64\mshtml.dll`,
+
+		// System sounds: 21.2 MB of .wav across 85 files. Nothing loads a
+		// wav at boot or during Setup; the worst case is a silent event.
+		winDir + `\Media`,
+
+		// Resource (.mun) files belonging to components this pipeline has
+		// already removed, so their resources are unreachable anyway:
+		// Windows Media Player (the MediaPlayer servicing package is in
+		// packagePatterns) and Internet Explorer's ieframe (the
+		// InternetExplorer optional package likewise).
+		//
+		// NOTE the deliberate narrowness here. Windows\SystemResources is
+		// full of far bigger and far more tempting targets --
+		// imageres.dll.mun is 24.3 MB and shell32.dll.mun is 18.2 MB, the
+		// two largest "image asset" looking files in the whole image -- and
+		// they are NOT removable. Since Windows 10, MUI resources are split
+		// out of the binaries into these .mun files, so imageres.dll.mun
+		// *is* where essentially every shell icon actually lives, and
+		// shell32.dll.mun holds Explorer's icons and strings. Deleting them
+		// reads as a free 42 MB and instead produces a shell with no icons.
+		// Only .mun files whose owning component is genuinely gone are cut.
+		winDir + `\SystemResources\wmploc.DLL.mun`,
+		winDir + `\SystemResources\ieframe.dll.mun`,
 
 		// Defender Advanced Threat Protection (the "Sense" agent) and the
 		// rest of the Program Files-side Defender payload: 302 MB unique
