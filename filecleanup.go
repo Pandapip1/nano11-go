@@ -346,6 +346,21 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		winDir + `\SystemApps\Microsoft.BioEnrollment_cw5n1h2txyewy`,
 		winDir + `\System32\WinBioPlugIns`,
 
+		// 82.9 MB, the second largest single item in the image after
+		// winre.wim, and pure data rather than code. Inspected rather than
+		// assumed: the cab holds 33 JSON files -- one per OEM (Acer, ASUS,
+		// Dell, EPSON, HP, Lenovo, LG, MSI, NEC, Panasonic, Samsung,
+		// Toshiba, five Generic_OEM_* buckets, ...) plus two schema files
+		// and a metadata file. It is the per-OEM confidence data driving
+		// the phased rollout of Secure Boot certificate updates, not the
+		// updates themselves: the actual payload next to it
+		// (dbupdate*.bin, dbxupdate*.bin, KEKUpdateCombined.bin,
+		// SKUSiPolicy.P7b, SbatLevel.txt) is about 1 MB in total and is
+		// deliberately left in place. Nothing links against the cab, so
+		// removing it costs the ability to stage a phased Secure Boot
+		// certificate update -- not Secure Boot itself, and not boot.
+		winDir + `\System32\SecureBootUpdates\BucketConfidenceData.cab`,
+
 		// Defender Advanced Threat Protection (the "Sense" agent) and the
 		// rest of the Program Files-side Defender payload: 302 MB unique
 		// by the same measurement, of which 153 MB is the Classification
