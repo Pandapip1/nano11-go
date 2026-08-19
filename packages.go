@@ -37,6 +37,45 @@ func packagePatterns(languageCode string) []string {
 		"Microsoft-Windows-PowerShell-ISE-FOD-Package~*",
 		"OpenSSH-Client-Package~*",
 
+		// --- Virtualization Optional Features ---
+		//
+		// Not part of nano11builder.ps1's own list: added on top of the
+		// faithful port, since none of Setup/OOBE's code paths depend on
+		// Hyper-V, WSL, the container/utility-VM stack, or Windows Sandbox
+		// being present, and a desktop image aimed at fitting on optical
+		// media has no use for any of them.
+		//
+		// Every identity prefix here was verified to actually exist in a
+		// real retail Windows 11 25H2 (build 26200) image's
+		// Windows\servicing\Packages rather than assumed from the feature's
+		// user-facing name -- an important distinction, since the obvious
+		// guesses (Microsoft-Windows-Subsystem-Linux-*,
+		// Microsoft-Windows-VirtualMachinePlatform-Package~*,
+		// Microsoft-Windows-FaxServicesClientPackage~*,
+		// Microsoft-Windows-WorkFolders-Client-Package~*) match nothing at
+		// all there. Note the two distinct Hyper-V identity namespaces:
+		// "Microsoft-Hyper-V-*" (ClientEdition, Hypervisor, Offline-*,
+		// Online-Services, Services) and the unprefixed "HyperV-*"
+		// (Compute-*, Feature-*, Networking-*, Primitive-*,
+		// OptionalFeature-*) -- both are real and neither covers the other.
+		//
+		// Deliberately excluded: Microsoft-Windows-Kernel-Package-Lxss-
+		// Package (kernel-adjacent, unlike the removable user-mode Lxss
+		// packages) and Microsoft-OneCore-VirtualizationBasedSecurity-
+		// Package (VBS/HVCI underpins Credential Guard and memory
+		// integrity, which is core OS security rather than an optional
+		// feature).
+		"Microsoft-Hyper-V-*",
+		"HyperV-*",
+		"Microsoft-Windows-Lxss-Package~*",
+		"Microsoft-Windows-Lxss-merged-Package~*",
+		"Microsoft-Windows-Lxss-Optional-*",
+		"Microsoft-Windows-Lxss-WOW64-Package~*",
+		"Containers-DisposableClientVM-*",
+		"Containers-ApplicationGuard-*",
+		"Microsoft-OneCore-Containers-*",
+		"Microsoft-UtilityVM-Containers-*",
+
 		// --- Language & Input Features (primary language only) ---
 		"Microsoft-Windows-LanguageFeatures-Handwriting-" + languageCode + "-Package~*",
 		"Microsoft-Windows-LanguageFeatures-OCR-" + languageCode + "-Package~*",
@@ -76,6 +115,14 @@ func packagePatterns(languageCode string) []string {
 // /Remove-Package operates on package-level identities only) and deletes
 // each one matching packagePatterns via component.Remove.
 func removeBloatPackages(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, languageCode string) error {
+	return removePackagesMatching(r, bt, root, packagePatterns(languageCode))
+}
+
+// removePackagesMatching is removeBloatPackages's body with the pattern list
+// injected rather than derived, so the measurement harness (measure_test.go)
+// can run the exact same removal logic against a modified pattern list
+// instead of maintaining a divergent copy of it.
+func removePackagesMatching(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, patterns []string) error {
 	children, err := root.ReadDir(component.PackagesDir)
 	if err != nil {
 		if errors.Is(err, wim.ErrNotFound) {
@@ -83,8 +130,6 @@ func removeBloatPackages(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, l
 		}
 		return fmt.Errorf("read %s: %w", component.PackagesDir, err)
 	}
-
-	patterns := packagePatterns(languageCode)
 
 	for _, c := range children {
 		if c.IsDirectory() || !strings.HasSuffix(strings.ToLower(c.NameUTF8()), ".mum") {

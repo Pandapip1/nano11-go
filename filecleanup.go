@@ -274,6 +274,37 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	mustRemove := []string{
 		winDir + `\Speech\Engines\TTS`,
 		`ProgramData\Microsoft\Windows Defender\Definition Updates`,
+
+		// Beyond nano11builder.ps1's own list, measured against a real
+		// retail Windows 11 25H2 (build 26200) Pro image by summing unique
+		// blob bytes (deduplicated by hash, so hardlinked copies are not
+		// double-counted) over the set that survives the WinSxS wipe:
+		//
+		//   Windows\Speech\Engines\SR          88.3 MB
+		//   Windows\Speech_OneCore\Engines     68.6 MB  (TTS 62.3 + SR 6.3)
+		//
+		// The PS1 removes only Windows\Speech\Engines\TTS (15.5 MB), which
+		// is the smallest of the four speech-engine trees -- it misses the
+		// speech *recognition* engines next to it and the entire parallel
+		// Speech_OneCore tree, together ~10x larger. Removing them is
+		// consistent with the language-feature removal the PS1 already
+		// does (LanguageFeatures-Speech / -TextToSpeech are in
+		// packagePatterns), which disables speech as a feature anyway.
+		winDir + `\Speech\Engines\SR`,
+		winDir + `\Speech_OneCore\Engines`,
+
+		// Defender Advanced Threat Protection (the "Sense" agent) and the
+		// rest of the Program Files-side Defender payload: 302 MB unique
+		// by the same measurement, of which 153 MB is the Classification
+		// model data (nl7data*/nl7models* DLLs) used for DLP content
+		// classification. The PS1 already removes the Defender servicing
+		// package (Windows-Defender-Client-Package, which its own comments
+		// acknowledge as aggressive) and the 222 MB of signature
+		// definitions under ProgramData above, so the on-disk binaries
+		// left stranded in Program Files are dead weight in an image that
+		// has already had Defender gutted.
+		`Program Files\Windows Defender Advanced Threat Protection`,
+		`Program Files\Windows Defender`,
 		winDir + `\Temp`,
 		winDir + `\Web`,
 		winDir + `\Help`,

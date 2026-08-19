@@ -26,6 +26,17 @@ var bloatAppxKeywords = []string{
 	"webpimageextension", "devhome", "photos", "camera", "quickassist",
 	"coreai", "peopleexperiencehost", "pinningconfirmationdialog",
 	"secureassessmentbrowser", "paint", "notepad",
+
+	// Not part of nano11builder.ps1's own keyword list -- added on top of
+	// the faithful port since they're real provisioned families the
+	// existing keywords don't happen to substring-match: Xbox identity/
+	// overlay/speech packages (family names like "Microsoft.Xbox.TCUI",
+	// "Microsoft.XboxIdentityProvider", "Microsoft.XboxSpeechToTextOverlay"
+	// don't contain "gaming"), the Widgets board
+	// ("MicrosoftWindows.Client.WebExperience"), and Snip & Sketch
+	// ("Microsoft.ScreenSketch", distinct from the SnippingTool-FoD
+	// servicing package already removed in packages.go).
+	"xbox", "webexperience", "screensketch",
 }
 
 // provisioningPath is the offline source of truth for provisioned AppX
