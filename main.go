@@ -170,16 +170,24 @@ func main() {
 	// in 32 KiB chunks across all cores (gowim lzx.Options's own doc has
 	// the corpus and full ladder): fast 20.5 MB/s, balanced 3.2 MB/s
 	// (+0.66% size vs default), default 0.63 MB/s, max 0.21 MB/s (-0.07%).
-	// Projected onto the real 7.4 GB install.wim export that is ~10 min at
-	// fast against ~3.5 h at default and ~10 h at max, for 1.75% more
-	// output.
+	// Those are raw encoder rates on already-in-memory chunks. Projecting
+	// them straight onto the image size understates a real run by ~3x,
+	// because a run also decompresses the source, re-encodes twice (export
+	// pass plus final write), and does the non-compression debloat work in
+	// between. The projections below are therefore anchored on a real
+	// measured end-to-end run instead: a full `-image 6` debloat of the
+	// 7.4 GB install.wim took 1761 s (29.4 min) wall-clock on 2026-08-18 at
+	// what was then the fast rung (13.8 MB/s), scaled here by each rung's
+	// measured rate. That anchoring also matches the observed behavior of
+	// an aborted default-preset run, which was tracking to ~13 h rather
+	// than the ~3.5 h raw arithmetic predicts.
 	lzxPresetName := "fast"
 	stages.lzx = lzx.Fast()
 	flag.Var(lzxPresetFlag{&stages.lzx, &lzxPresetName}, "lzx-preset",
 		"LZX encoder speed/size tradeoff for every WIM written: fast (default), balanced, default or max. "+
 			"Measured 2026-08-18 (24-core, 29.4 MiB of real Windows image data, 32 KiB chunks, all cores): fast 20.5 MB/s at +1.75% output size, "+
 			"balanced 3.2 MB/s at +0.66%, default 0.63 MB/s, max 0.21 MB/s at -0.07%. "+
-			"For the real 7.4 GB install.wim export that is roughly 10 min (fast) vs ~40 min (balanced) vs ~3.5 h (default) vs ~10 h (max) of compression; "+
+			"Scaled from a real measured 1761 s (29.4 min) end-to-end debloat of the 7.4 GB install.wim, a full run is roughly 20 min (fast) vs ~2 h (balanced) vs ~11 h (default) vs ~32 h (max); "+
 			"pick balanced or default when output size matters more than turnaround")
 	flag.Parse()
 	fmt.Printf("LZX preset: %s\n", lzxPresetName)
