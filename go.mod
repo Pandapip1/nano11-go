@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/Pandapip1/gowim/appx v0.0.0
 	github.com/Pandapip1/gowim/component v0.0.0
+	github.com/Pandapip1/gowim/iso v0.0.0
 	github.com/Pandapip1/gowim/lzx v0.0.0
 	github.com/Pandapip1/gowim/regf v0.0.0
 	github.com/Pandapip1/gowim/registry v0.0.0
@@ -22,6 +23,7 @@ require (
 replace (
 	github.com/Pandapip1/gowim/appx => ../gowim/appx
 	github.com/Pandapip1/gowim/component => ../gowim/component
+	github.com/Pandapip1/gowim/iso => ../gowim/iso
 	github.com/Pandapip1/gowim/lzms => ../gowim/lzms
 	github.com/Pandapip1/gowim/lzx => ../gowim/lzx
 	github.com/Pandapip1/gowim/mum => ../gowim/mum

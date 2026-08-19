@@ -13,8 +13,8 @@ import (
 // Windows\System32\Sysprep\autounattend.xml inside the mounted image (see
 // its "Enabling Local Accounts on OOBE" section) so Setup skips the
 // Microsoft-account requirement; it also ships a copy at the ISO root for
-// unattended boot-time setup, which is handled by rebuild-iso.sh copying
-// this same repo file into the extracted ISO tree, not by this program.
+// unattended boot-time setup, which the ISO-authoring stage writes from
+// this same embedded copy (see isoimage.go's buildISO).
 //
 //go:embed autounattend.xml
 var autounattendXML []byte

@@ -7,11 +7,13 @@
 // steps nano11's own comments flag as breakage-prone -- using only
 // gowim's Go packages: no DISM, no mounted image, no admin rights.
 //
-// It deliberately does NOT implement ISO9660/UDF writing or El Torito boot
-// catalogs itself (see gowim's TODO.md: that subsystem is explicitly out
-// of scope for gowim). Extracting/rebuilding the ISO around this tool's
-// modified install.wim is left to external tooling (7z to extract,
-// genisoimage to rebuild) driven by rebuild-iso.sh, not Go code.
+// It also authors the final bootable ISO itself, over gowim's iso package
+// (ECMA-119 + the UDF 1.02 bridge + El Torito) -- see isoimage.go and the
+// -iso-dir/-iso-out flags. That step used to be a shell script calling
+// genisoimage, rebuild-iso.sh, which existed only because gowim had not
+// implemented ISO writing yet; it has, so the script is gone and there is
+// now no external tool anywhere in the pipeline except 7z to *extract* the
+// source ISO in the first place.
 //
 // Also NOT ported, both for the same reason (see gowim's TODO.md
 // "CBS/servicing package subsystem" research entry): DISM's
@@ -161,6 +163,16 @@ func main() {
 	flag.StringVar(&stages.bootWimOutPath, "boot-wim-out", "", "path to write the shrunk boot.wim (required if -boot-wim is set)")
 	flag.BoolVar(&stages.skipBootRegTweaks, "skip-boot-regtweaks", false, "skip the requirement-bypass/BitLocker registry tweaks applied to boot.wim's setup image")
 	flag.BoolVar(&stages.skipBootLocaleTrim, "skip-boot-locale-trim", false, "skip removing non-en-US locale directories and their owning WinSxS packages from boot.wim's setup image")
+	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
+	// keyed on one flag being non-empty, and it runs last: it consumes what
+	// the install.wim and boot.wim stages above produced.
+	var isoOpts isoFlags
+	flag.StringVar(&isoOpts.dir, "iso-dir", "", "path to an extracted Windows ISO tree; if set, authors a bootable ISO from it after the stages above (the tree is prepared in place: install.wim/boot.wim placed, root trimmed to nano11's keepList)")
+	flag.StringVar(&isoOpts.out, "iso-out", "", "path to write the authored bootable ISO (required if -iso-dir is set)")
+	flag.StringVar(&isoOpts.volID, "iso-volid", "Nano11Go", "volume identifier (disc label) of the authored ISO")
+	flag.StringVar(&isoOpts.installWim, "iso-install-wim", "", "install.wim to place at sources/install.wim in -iso-dir (default: whatever -out wrote; empty and no -out leaves the tree's existing copy alone)")
+	flag.StringVar(&isoOpts.bootWim, "iso-boot-wim", "", "boot.wim to place at sources/boot.wim in -iso-dir (default: whatever -boot-wim-out wrote; empty and no -boot-wim-out leaves the tree's existing copy alone)")
+	flag.BoolVar(&isoOpts.skipAutounattend, "skip-iso-autounattend", false, "do not place nano11's embedded autounattend.xml at the authored ISO's root")
 	// Default "fast", not gowim's own ratio-first default: this tool's
 	// workload is re-encoding multi-gigabyte images end to end (the
 	// install.wim export pass alone re-encodes every blob of a ~7.4 GB
@@ -203,15 +215,33 @@ func main() {
 		fmt.Printf("Wrote shrunk boot.wim to %s\n", stages.bootWimOutPath)
 	}
 
-	if *wimPath == "" {
-		if stages.bootWimPath != "" {
-			return
-		}
+	// -wim is required only when no other stage was asked for, so that
+	// -boot-wim and -iso-dir can each be run on their own (re-authoring an
+	// ISO around an install.wim debloated by an earlier run is the common
+	// case: the debloat costs tens of minutes, the ISO a few seconds).
+	if *wimPath == "" && stages.bootWimPath == "" && isoOpts.dir == "" {
 		log.Fatal("-wim is required")
 	}
 
-	if err := run(*wimPath, *outPath, *imageIndex, stages); err != nil {
-		log.Fatal(err)
+	if *wimPath != "" {
+		if err := run(*wimPath, *outPath, *imageIndex, stages); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if isoOpts.dir != "" {
+		// Default each ISO input to what this same run just produced, so a
+		// full pipeline needs no repeated paths; an explicit flag overrides.
+		if isoOpts.installWim == "" && *wimPath != "" && *imageIndex != 0 {
+			isoOpts.installWim = *outPath
+		}
+		if isoOpts.bootWim == "" {
+			isoOpts.bootWim = stages.bootWimOutPath
+		}
+		fmt.Println("--- Authoring bootable ISO ---")
+		if err := buildISO(isoOpts); err != nil {
+			log.Fatalf("author ISO: %v", err)
+		}
 	}
 }
 

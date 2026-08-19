@@ -135,9 +135,10 @@ these are the only remaining gaps, all outside install.wim itself.
       bypass UX only.
 - [x] **Final ISO-root cleanup.** PS1 lines 541-547: deletes everything at
       the extracted-media root except `boot`, `efi`, `sources`, `bootmgr`,
-      `bootmgr.efi`, `setup.exe`, `autounattend.xml`. Done: `rebuild-iso.sh`
-      now runs this pass (plain shell, matching the keep-list exactly)
-      before genisoimage. Verified against the actual shape of a real
+      `bootmgr.efi`, `setup.exe`, `autounattend.xml`. Done: originally in
+      `rebuild-iso.sh`; since 2026-08-19 in Go, as `isoimage.go`'s
+      `cleanISORoot` against the same `isoRootKeepList`, run just before
+      the ISO is authored. Verified against the actual shape of a real
       extracted retail ISO root (`boot`, `efi`, `sources`, `support`,
       `autorun.inf`, `bootmgfw.efi`, `bootmgr`, `bootmgr.efi`, `setup.exe`)
       via a disposable mock directory with the same entries (not run
