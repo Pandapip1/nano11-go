@@ -248,6 +248,97 @@ var driverStoreRemovePatterns = []string{
 	"ntprint.inf*", "ntprint4.inf*", "helloface.inf*", "mdm*",
 }
 
+// vendorNICRemovePatterns are the 67 vendor network-adapter driver families
+// in the DriverStore -- 242.4 MB measured on a real 25H2 build 26200 Pro
+// image, the largest single block left after the cleanup above, and removed
+// at the user's explicit request.
+//
+// This is hardware enablement rather than bloat: a machine whose NIC is not
+// covered by what remains comes up with NO network at all, including during
+// OOBE, until a driver is supplied from USB. That is an acceptable trade for
+// a VM or known-hardware target and a bad one for arbitrary physical
+// machines.
+//
+// The list is spelled out family by family rather than globbed as "net*" for
+// a specific and load-bearing reason: "net*" in the DriverStore does NOT mean
+// "network adapter driver". The networking STACK ships under the same prefix
+// -- nettcpip (TCP/IP itself), netip6, netloop, netbrdg, netnb, netrast /
+// netrasa / netrass (RAS), netpacer (QoS), netnwifi (native WiFi), netlldp,
+// the netvwifi* virtual-WiFi trio, plus the netrndis and netwmbclass class
+// drivers. Those 25 families total 0.686 MB and every one of them is
+// deliberately preserved; a blanket "net*" glob would delete TCP/IP and take
+// networking out far more comprehensively than removing every vendor driver
+// ever could.
+var vendorNICRemovePatterns = []string{
+	"netwtw02.inf*",
+	"netwtw10.inf*",
+	"netwtw08.inf*",
+	"netwtw06.inf*",
+	"netwew01.inf*",
+	"netwsw00.inf*",
+	"netrtwlane.inf*",
+	"netwew00.inf*",
+	"netwtw04.inf*",
+	"netrtwlanu.inf*",
+	"netwns64.inf*",
+	"netwlv64.inf*",
+	"netrtwlane01.inf*",
+	"netrtwlans.inf*",
+	"netbc64.inf*",
+	"netwbw02.inf*",
+	"qcwlan64.inf*",
+	"netathr10x.inf*",
+	"netbc63a.inf*",
+	"netathrx.inf*",
+	"athw8x.inf*",
+	"rtwlanu_oldic.inf*",
+	"netrtwlane_13.inf*",
+	"netevbda.inf*",
+	"netevbd0a.inf*",
+	"netr28x.inf*",
+	"netr28ux.inf*",
+	"netmlx5.inf*",
+	"net8192se64.inf*",
+	"netelx.inf*",
+	"net1ic64.inf*",
+	"netmlx4eth63.inf*",
+	"netr7364.inf*",
+	"netnvma.inf*",
+	"nett4x64.inf*",
+	"net2ic68.inf*",
+	"netl1c63x64.inf*",
+	"netk57a.inf*",
+	"netbvbda.inf*",
+	"netmyk64.inf*",
+	"net8187bv64.inf*",
+	"netbxnda.inf*",
+	"netnvm64.inf*",
+	"nete1e3e.inf*",
+	"netbxnd0a.inf*",
+	"netcxrd.inf*",
+	"net1yx64.inf*",
+	"netefe3e.inf*",
+	"net7400-x64-n650.inf*",
+	"nete1g3e.inf*",
+	"netxex64.inf*",
+	"netjme.inf*",
+	"net7800-x64-n650f.inf*",
+	"netvf63a.inf*",
+	"netv1x64.inf*",
+	"net44amd.inf*",
+	"netax88772.inf*",
+	"net9500-x64-n650f.inf*",
+	"net7500-x64-n650f.inf*",
+	"networkprivacypolicy.inf*",
+	"netax88179_178a.inf*",
+	"netl1e64.inf*",
+	"netg664.inf*",
+	"netvg63a.inf*",
+	"netrtl64.inf*",
+	"netl160a.inf*",
+	"netl260a.inf*",
+}
+
 // fontsKeepPatterns/fontsExtraRemove are nano11builder.ps1's font-pruning
 // pair: first everything NOT matching a keep pattern is deleted, then a
 // further explicit list is deleted even though some of those names
@@ -294,6 +385,11 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 
 	fmt.Println("Slimming the DriverStore...")
 	if err := removeMatchingChildren(root, bt, driverRepoDir, driverStoreRemovePatterns, "driverstore"); err != nil {
+		return err
+	}
+
+	fmt.Println("Removing vendor network adapter drivers (no NIC support for unlisted hardware)...")
+	if err := removeMatchingChildren(root, bt, driverRepoDir, vendorNICRemovePatterns, "driverstore (vendor NICs)"); err != nil {
 		return err
 	}
 
@@ -360,6 +456,24 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		// removing it costs the ability to stage a phased Secure Boot
 		// certificate update -- not Secure Boot itself, and not boot.
 		winDir + `\System32\SecureBootUpdates\BucketConfidenceData.cab`,
+
+		// Legacy web rendering engines, 89 MB across the four files, removed
+		// at the user's explicit request. Both are dead weight in this image
+		// in the sense that their front ends are already gone -- the pipeline
+		// removes Edge, Edge WebView and the InternetExplorer optional
+		// package -- but unlike everything else cut above, these are code
+		// with real COM surface rather than data or drivers:
+		//
+		//   edgehtml.dll  46 MB  the legacy UWP WebView engine. Anything
+		//       still hosting the old WebView control loses rendering.
+		//   mshtml.dll    43 MB  Trident. This is the wider-reaching of the
+		//       two: .hta scripts stop working, and any legacy application
+		//       or installer that COM-instantiates MSHTML to render markup
+		//       will fail rather than degrade.
+		winDir + `\System32\edgehtml.dll`,
+		winDir + `\SysWOW64\edgehtml.dll`,
+		winDir + `\System32\mshtml.dll`,
+		winDir + `\SysWOW64\mshtml.dll`,
 
 		// Defender Advanced Threat Protection (the "Sense" agent) and the
 		// rest of the Program Files-side Defender payload: 302 MB unique
