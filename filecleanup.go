@@ -347,6 +347,7 @@ var fontsKeepPatterns = []string{
 	"segoe*.*", "tahoma*.*", "marlett.ttf", "8541oem.fon", "segui*.*",
 	"consol*.*", "lucon*.*", "calibri*.*", "arial*.*", "times*.*", "cou*.*", "8*.*",
 }
+
 // bootFontRemovePatterns are the CJK boot-manager fonts under
 // Windows\Boot\Fonts and Windows\Boot\Fonts_EX: 24.5 MB of the 27.5 MB
 // those two directories hold. They exist so the boot manager and BitLocker
