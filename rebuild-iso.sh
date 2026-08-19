@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Rebuilds a bootable Windows ISO around a gowim-modified install.wim.
 #
-# This is deliberately a plain shell script, not Go code: gowim's own
-# TODO.md explicitly scopes ISO9660/UDF/El Torito writing out of the
-# library (see "ISO image creation subsystem" -- ruled out of scope for
-# this project). Everything gowim-specific (reading a real install.wim,
+# This is currently a plain shell script rather than Go code because
+# gowim does not implement ISO writing *yet* -- not because it never
+# will. gowim's TODO.md carries an open "ISO image creation subsystem"
+# section (an ISO 9660 + Joliet/UDF writer and El Torito boot catalog
+# support, matching what `oscdimg -udfver102` produces), confirmed still
+# in scope on 2026-08-19. An earlier version of this comment claimed that
+# section had been ruled out of scope; that was never true of gowim's
+# TODO, and this script is expected to be replaced by the library's own
+# writer once that lands.
+#
+# Everything gowim-specific (reading a real install.wim,
 # removing AppX packages, disabling services, writing a new install.wim)
 # happens in main.go; this script only re-assembles the surrounding ISO
 # using genisoimage's UDF+El Torito support, exactly like community
