@@ -102,7 +102,6 @@ func (f lzxPresetFlag) String() string {
 
 func (f lzxPresetFlag) Set(s string) error {
 	presets := map[string]func() lzx.Options{
-		"fastest":  lzx.Fastest,
 		"fast":     lzx.Fast,
 		"balanced": lzx.Balanced,
 		"default":  lzx.DefaultOptions,
@@ -110,7 +109,7 @@ func (f lzxPresetFlag) Set(s string) error {
 	}
 	p, ok := presets[s]
 	if !ok {
-		return fmt.Errorf("invalid -lzx-preset %q (want fastest, fast, balanced, default or max)", s)
+		return fmt.Errorf("invalid -lzx-preset %q (want fast, balanced, default or max)", s)
 	}
 	*f.opts = p()
 	*f.name = s
@@ -167,19 +166,20 @@ func main() {
 	// install.wim export pass alone re-encodes every blob of a ~7.4 GB
 	// image, and the final write does it again), where the measured
 	// tradeoff is lopsided. Measured 2026-08-18 on a 24-core x86-64
-	// machine over a 4 MiB corpus compressed in 32 KiB chunks across all
-	// cores (gowim lzx.Options's own doc has the corpus and full ladder):
-	// fast 13.8 MB/s, balanced 2.94 MB/s (+0.52% size vs default),
-	// default 0.511 MB/s, max 0.202 MB/s (-0.06%). Projected onto the real
-	// 7.4 GB install.wim export that is ~20-30 min at fast against ~4 h at
-	// default and ~10 h at max, for 2.87% more output.
+	// machine over 29.4 MiB of real Windows install-image data compressed
+	// in 32 KiB chunks across all cores (gowim lzx.Options's own doc has
+	// the corpus and full ladder): fast 20.5 MB/s, balanced 3.2 MB/s
+	// (+0.66% size vs default), default 0.63 MB/s, max 0.21 MB/s (-0.07%).
+	// Projected onto the real 7.4 GB install.wim export that is ~10 min at
+	// fast against ~3.5 h at default and ~10 h at max, for 1.75% more
+	// output.
 	lzxPresetName := "fast"
 	stages.lzx = lzx.Fast()
 	flag.Var(lzxPresetFlag{&stages.lzx, &lzxPresetName}, "lzx-preset",
-		"LZX encoder speed/size tradeoff for every WIM written: fastest, fast (default), balanced, default or max. "+
-			"Measured 2026-08-18 (24-core, 4 MiB corpus, 32 KiB chunks, all cores): fast 13.8 MB/s at +2.87% output size, "+
-			"balanced 2.94 MB/s at +0.52%, default 0.511 MB/s, max 0.202 MB/s at -0.06%. "+
-			"For the real 7.4 GB install.wim export that is roughly 20-30 min (fast) vs ~1.5-2 h (balanced) vs ~4 h (default) vs ~10 h (max) of compression; "+
+		"LZX encoder speed/size tradeoff for every WIM written: fast (default), balanced, default or max. "+
+			"Measured 2026-08-18 (24-core, 29.4 MiB of real Windows image data, 32 KiB chunks, all cores): fast 20.5 MB/s at +1.75% output size, "+
+			"balanced 3.2 MB/s at +0.66%, default 0.63 MB/s, max 0.21 MB/s at -0.07%. "+
+			"For the real 7.4 GB install.wim export that is roughly 10 min (fast) vs ~40 min (balanced) vs ~3.5 h (default) vs ~10 h (max) of compression; "+
 			"pick balanced or default when output size matters more than turnaround")
 	flag.Parse()
 	fmt.Printf("LZX preset: %s\n", lzxPresetName)
