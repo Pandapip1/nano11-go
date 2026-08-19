@@ -87,25 +87,62 @@ func packagePatterns(languageCode string) []string {
 		"*IME-zh-tw*",
 
 		// --- Core OS Features (removal is aggressive and will break functionality) ---
-		"Windows-Defender-Client-Package~*",
-		"Microsoft-Windows-Search-Engine-Client-Package~*",
+		//
+		// The PS1's own "Windows-Defender-Client-Package~*" and
+		// "Microsoft-Windows-Search-Engine-Client-Package~*" are BOTH dead
+		// on 25H2 -- verified by matching every pattern in this list against
+		// the real 3460 .mum identities in a retail build 26200 image: each
+		// matches exactly zero packages. Search's real identity has no
+		// hyphen between "Search" and "Engine" (SearchEngine-Client-Package,
+		// plus -base/-onecoreuap/-shell variants), and Defender's client
+		// package was split into the several identities below. So the
+		// script's two headline "this will break things" removals have
+		// silently been no-ops -- see the dead-pattern note at the end of
+		// this list.
+		"Windows-Defender-AM-Default-Definitions-*",
+		"Windows-Defender-Group-Policy-*",
+		"Windows-Defender-ApplicationGuard-Inbox-*",
+		"Microsoft-Windows-SenseClient-*",
+		"Microsoft-Windows-SearchEngine-Client-Package*",
 		"Microsoft-Windows-Kernel-LA57-FoD-Package~*",
 
 		// --- Security & Identity (breaks these features) ---
+		// Hello-BioEnrollment was renamed to BioEnrollment-UX; the PS1's
+		// old name matches nothing.
 		"Microsoft-Windows-Hello-Face-Package~*",
-		"Microsoft-Windows-Hello-BioEnrollment-Package~*",
-		"Microsoft-Windows-BitLocker-DriveEncryption-FVE-Package~*",
-		"Microsoft-Windows-TPM-WMI-Provider-Package~*",
-
-		// --- Accessibility Tools ---
-		"Microsoft-Windows-Narrator-App-Package~*",
-		"Microsoft-Windows-Magnifier-App-Package~*",
+		"Microsoft-Windows-BioEnrollment-UX-Package~*",
 
 		// --- Miscellaneous Features ---
+		// The PS1's "Xps-Xps-Viewer-Opt" matches nothing; the real XPS
+		// identities are the two Printing-* ones below.
 		"Microsoft-Windows-Printing-PMCPPC-FoD-Package~*",
+		"Microsoft-Windows-Printing-XpsDocumentWriter-Opt-Package~*",
+		"Microsoft-Windows-Printing-XPSServices-Package~*",
 		"Microsoft-Windows-WebcamExperience-Package~*",
-		"Microsoft-Media-MPEG2-Decoder-Package~*",
 		"Microsoft-Windows-Wallpaper-Content-Extended-FoD-Package~*",
+
+		// --- Dead patterns, deliberately NOT carried over ---
+		//
+		// These PS1 entries match zero identities in a real 25H2 image and
+		// have no renamed equivalent to substitute -- the components are
+		// simply gone from the base OS, so there is nothing to remove:
+		//
+		//   Microsoft-Windows-WordPad-FoD-Package~*      (WordPad was
+		//       removed from Windows outright in 24H2)
+		//   Microsoft-Windows-MSPaint-FoD-Package~*      } now Store apps,
+		//   Microsoft-Windows-SnippingTool-FoD-Package~* } handled instead
+		//                                                } by appx.go's
+		//                                                } "paint" and
+		//                                                } "screensketch"
+		//   Microsoft-Windows-Narrator-App-Package~*     } inbox components
+		//   Microsoft-Windows-Magnifier-App-Package~*    } rather than FoDs
+		//   Microsoft-Windows-BitLocker-DriveEncryption-FVE-Package~*
+		//   Microsoft-Windows-TPM-WMI-Provider-Package~* } folded into core
+		//   Microsoft-Media-MPEG2-Decoder-Package~*      } servicing
+		//   *IME-ja-jp* / *IME-ko-kr* / *IME-zh-cn* / *IME-zh-tw*
+		//       (the CJK IMEs are no longer standalone packages; the
+		//       file-level Windows\System32\InputMethod\{CHS,CHT,JPN,KOR}
+		//       removal in filecleanup.go is what actually cuts them)
 	}
 }
 
