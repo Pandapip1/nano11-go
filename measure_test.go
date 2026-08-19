@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -86,6 +87,14 @@ var measureCandidates = []struct {
 	{"Windows Mobility Center", "Microsoft-Windows-MobilePC-Client-Premium-Package~*", ""},
 	{"OneCore Containers", "Microsoft-OneCore-Containers-*", ""},
 	{"UtilityVM Containers", "Microsoft-UtilityVM-Containers-*", ""},
+	{"Defender AM definitions", "Windows-Defender-AM-Default-Definitions-*", "revived: PS1's Windows-Defender-Client-Package~* matches nothing"},
+	{"Defender group policy", "Windows-Defender-Group-Policy-*", "revived"},
+	{"Defender App Guard inbox", "Windows-Defender-ApplicationGuard-Inbox-*", "revived"},
+	{"Defender SenseClient", "Microsoft-Windows-SenseClient-*", "revived"},
+	{"Search engine client", "Microsoft-Windows-SearchEngine-Client-Package*", "revived: PS1's Search-Engine-Client (hyphenated) matches nothing"},
+	{"BioEnrollment UX", "Microsoft-Windows-BioEnrollment-UX-Package~*", "revived: PS1's Hello-BioEnrollment matches nothing"},
+	{"XPS printing", "Microsoft-Windows-Printing-XpsDocumentWriter-Opt-Package~*", "revived"},
+	{"XPS services", "Microsoft-Windows-Printing-XPSServices-Package~*", "revived"},
 }
 
 // measureExtraExclusions lists packagePatterns entries that are subsumed by a
@@ -101,6 +110,16 @@ var measureExtraExclusions = map[string]bool{
 	"Microsoft-Windows-Lxss-merged-Package~*": true,
 	"Microsoft-Windows-Lxss-Optional-*":       true,
 	"Microsoft-Windows-Lxss-WOW64-Package~*":  true,
+
+	// revived patterns, each now also spelled in packagePatterns
+	"Windows-Defender-AM-Default-Definitions-*":                  true,
+	"Windows-Defender-Group-Policy-*":                            true,
+	"Windows-Defender-ApplicationGuard-Inbox-*":                  true,
+	"Microsoft-Windows-SenseClient-*":                            true,
+	"Microsoft-Windows-SearchEngine-Client-Package*":             true,
+	"Microsoft-Windows-BioEnrollment-UX-Package~*":               true,
+	"Microsoft-Windows-Printing-XpsDocumentWriter-Opt-Package~*": true,
+	"Microsoft-Windows-Printing-XPSServices-Package~*":           true,
 }
 
 // measureEnv is everything a trial needs that can be read from the source WIM
@@ -184,7 +203,7 @@ func TestMeasure(t *testing.T) {
 
 	base := measureBasePatterns(env.language)
 	t.Logf("base pattern list: %d patterns (%d candidate-overlapping patterns excluded)",
-		len(base), len(packagePatterns(env.language))-len(base))
+		len(base), len(packagePatterns(env.language, false))-len(base))
 
 	// Verify, rather than assume, that the base list really does leave every
 	// candidate's packages in place. A pattern already covered by the base
@@ -210,7 +229,7 @@ func TestMeasure(t *testing.T) {
 	// delta is measured against.
 	pristine := measureTrial(t, env, nil, false, false)
 	t.Logf("pristine image (no stages):                       %s", humanBytes(pristine))
-	current := measureTrial(t, env, packagePatterns(env.language), true, true)
+	current := measureTrial(t, env, packagePatterns(env.language, false), true, true)
 	t.Logf("BASELINE, current pipeline as shipped:            %s  (-%s vs pristine)",
 		humanBytes(current), humanBytes(pristine-current))
 	baseWithWipe := measureTrial(t, env, base, true, true)
@@ -218,8 +237,25 @@ func TestMeasure(t *testing.T) {
 	t.Logf("base (candidate-overlapping patterns excluded):   %s", humanBytes(baseWithWipe))
 	t.Logf("base, WinSxS wipe disabled:                       %s", humanBytes(baseNoWipe))
 
+	// A full sweep is dozens of trials, each dominated by wipeWinSxS (which
+	// deletes thousands of WinSxS entries and re-indexes the 95k-entry blob
+	// table per deletion) and so takes tens of seconds. NANO11_MEASURE_ONLY
+	// takes a comma-separated list of candidate patterns, so a sweep can be run
+	// in chunks that each fit inside a normal command timeout rather than as
+	// one long-running job. The reference trials are cheap enough to repeat in
+	// every chunk, which also cross-checks that chunks are comparable.
+	only := map[string]bool{}
+	for _, p := range strings.Split(os.Getenv("NANO11_MEASURE_ONLY"), ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			only[p] = true
+		}
+	}
+
 	var rows []row
 	for _, c := range measureCandidates {
+		if len(only) > 0 && !only[c.pattern] {
+			continue
+		}
 		with := append(append([]string(nil), base...), c.pattern)
 		n, mumBytes, catBytes := matchedPackageFiles(t, env, c.pattern)
 		rows = append(rows, row{
@@ -276,7 +312,7 @@ func measureBasePatterns(languageCode string) []string {
 		excluded[c.pattern] = true
 	}
 	var out []string
-	for _, p := range packagePatterns(languageCode) {
+	for _, p := range packagePatterns(languageCode, false) {
 		if !excluded[p] {
 			out = append(out, p)
 		}
@@ -332,7 +368,7 @@ func measureTrial(t *testing.T, env *measureEnv, patterns []string, otherStages,
 		}
 	}
 	if otherStages {
-		if err := runAggressiveFileCleanup(root, bt, newBlobs, env.arch, winREKeep, "", stageFlags{}.lzx); err != nil {
+		if err := runAggressiveFileCleanup(root, bt, newBlobs, env.arch, stageFlags{winRE: winREKeep}); err != nil {
 			restore()
 			t.Fatal(err)
 		}
@@ -345,7 +381,19 @@ func measureTrial(t *testing.T, env *measureEnv, patterns []string, otherStages,
 	}
 	restore()
 
-	return uniqueBlobBytes(t, root, bt, newBlobs)
+	total := uniqueBlobBytes(t, root, bt, newBlobs)
+
+	// Each trial holds a whole freshly-parsed image tree plus a blob table and
+	// two hash-keyed maps over ~95k blobs, and there are dozens of trials back
+	// to back. Without handing the pages back between them the process's RSS
+	// tracks the high-water mark of two live trees rather than one, which on a
+	// machine already running VMs was enough to get the run OOM-killed
+	// (SIGTERM from systemd-oomd) partway through. Dropping the references and
+	// releasing eagerly here costs a few seconds per trial and makes the run
+	// survivable alongside other work.
+	root, meta, bt, newBlobs = nil, nil, nil, nil
+	debug.FreeOSMemory()
+	return total
 }
 
 // uniqueBlobBytes is the metric: the set of distinct blob hashes root's tree

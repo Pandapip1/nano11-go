@@ -23,8 +23,8 @@ import (
 // Defender, Search, Hello, BitLocker, TPM-WMI, LA57) -- ported as-is, not
 // second-guessed, since reproducing nano11's actual behavior (including
 // the parts that break things) is the point of this port.
-func packagePatterns(languageCode string) []string {
-	return []string{
+func packagePatterns(languageCode string, keepDefenderSearch bool) []string {
+	pats := []string{
 		// --- Legacy Components & Optional Apps ---
 		"Microsoft-Windows-InternetExplorer-Optional-Package~*",
 		"Microsoft-Windows-MediaPlayer-Package~*",
@@ -99,11 +99,6 @@ func packagePatterns(languageCode string) []string {
 		// script's two headline "this will break things" removals have
 		// silently been no-ops -- see the dead-pattern note at the end of
 		// this list.
-		"Windows-Defender-AM-Default-Definitions-*",
-		"Windows-Defender-Group-Policy-*",
-		"Windows-Defender-ApplicationGuard-Inbox-*",
-		"Microsoft-Windows-SenseClient-*",
-		"Microsoft-Windows-SearchEngine-Client-Package*",
 		"Microsoft-Windows-Kernel-LA57-FoD-Package~*",
 
 		// --- Security & Identity (breaks these features) ---
@@ -144,6 +139,23 @@ func packagePatterns(languageCode string) []string {
 		//       file-level Windows\System32\InputMethod\{CHS,CHT,JPN,KOR}
 		//       removal in filecleanup.go is what actually cuts them)
 	}
+
+	// The Defender and Search removals are gated because they are newly
+	// live: their PS1 patterns matched nothing on 25H2 until they were
+	// revived, so no passing install test has ever covered them, and the
+	// PS1's own comments single them out as breakage-causing. -keep-defender-
+	// search takes them back out without touching anything else, which is
+	// what makes an install/boot failure bisectable.
+	if !keepDefenderSearch {
+		pats = append(pats,
+			"Windows-Defender-AM-Default-Definitions-*",
+			"Windows-Defender-Group-Policy-*",
+			"Windows-Defender-ApplicationGuard-Inbox-*",
+			"Microsoft-Windows-SenseClient-*",
+			"Microsoft-Windows-SearchEngine-Client-Package*",
+		)
+	}
+	return pats
 }
 
 // removeBloatPackages parses every servicing\Packages\*.mum file (skipping
@@ -151,8 +163,8 @@ func packagePatterns(languageCode string) []string {
 // since the PA30 decode it requires is unneeded here and expensive; DISM's
 // /Remove-Package operates on package-level identities only) and deletes
 // each one matching packagePatterns via component.Remove.
-func removeBloatPackages(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, languageCode string) error {
-	return removePackagesMatching(r, bt, root, packagePatterns(languageCode))
+func removeBloatPackages(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, languageCode string, keepDefenderSearch bool) error {
+	return removePackagesMatching(r, bt, root, packagePatterns(languageCode, keepDefenderSearch))
 }
 
 // removePackagesMatching is removeBloatPackages's body with the pattern list

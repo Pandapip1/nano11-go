@@ -424,7 +424,8 @@ const (
 	winREDonorStub
 )
 
-func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs map[wim.Hash][]byte, arch string, winRE winREMode, winREDonorPath string, lzxOpts lzx.Options) error {
+func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs map[wim.Hash][]byte, arch string, stages stageFlags) error {
+	winRE, winREDonorPath, lzxOpts := stages.winRE, stages.winREDonorPath, stages.lzx
 	fmt.Println("Removing pre-compiled .NET assemblies (Native Images)...")
 	if err := removeMatchingChildren(root, bt, winDir+`\assembly`, []string{"NativeImages_*"}, "native images"); err != nil {
 		return err
@@ -435,9 +436,13 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		return err
 	}
 
-	fmt.Println("Removing vendor network adapter drivers (no NIC support for unlisted hardware)...")
-	if err := removeMatchingChildren(root, bt, driverRepoDir, vendorNICRemovePatterns, "driverstore (vendor NICs)"); err != nil {
-		return err
+	if stages.keepNICDrivers {
+		fmt.Println("Keeping vendor network adapter drivers (-keep-nic-drivers)")
+	} else {
+		fmt.Println("Removing vendor network adapter drivers (no NIC support for unlisted hardware)...")
+		if err := removeMatchingChildren(root, bt, driverRepoDir, vendorNICRemovePatterns, "driverstore (vendor NICs)"); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println("Pruning CJK boot fonts...")
@@ -524,10 +529,6 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		//       two: .hta scripts stop working, and any legacy application
 		//       or installer that COM-instantiates MSHTML to render markup
 		//       will fail rather than degrade.
-		winDir + `\System32\edgehtml.dll`,
-		winDir + `\SysWOW64\edgehtml.dll`,
-		winDir + `\System32\mshtml.dll`,
-		winDir + `\SysWOW64\mshtml.dll`,
 
 		// System sounds: 21.2 MB of .wav across 85 files. Nothing loads a
 		// wav at boot or during Setup; the worst case is a silent event.
@@ -582,6 +583,13 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	// removal above and with the CJK IME package/AppX removal; SHARED is
 	// left in place as cheap insurance, since 7.3 MB is not worth guessing
 	// about what else might link against it.
+	if stages.keepWebEngines {
+		fmt.Println("Keeping mshtml.dll/edgehtml.dll (-keep-web-engines)")
+	} else {
+		mustRemove = append(mustRemove,
+			winDir+`\System32\edgehtml.dll`, winDir+`\SysWOW64\edgehtml.dll`,
+			winDir+`\System32\mshtml.dll`, winDir+`\SysWOW64\mshtml.dll`)
+	}
 	for _, ime := range imeDirsToRemove {
 		mustRemove = append(mustRemove, winDir+`\System32\IME\`+ime)
 	}

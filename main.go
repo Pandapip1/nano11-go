@@ -79,6 +79,14 @@ type stageFlags struct {
 	bootWimOutPath     string
 	skipBootRegTweaks  bool
 	skipBootLocaleTrim bool
+	// The three groups below are the 2026-08-19 additions most likely to
+	// break a real install or first boot, each isolated behind its own flag
+	// so a failure can be bisected by flipping flags rather than by editing
+	// and rebuilding. They are also genuinely useful on their own: an image
+	// destined for physical hardware wants keepNICDrivers, for instance.
+	keepNICDrivers     bool
+	keepWebEngines     bool
+	keepDefenderSearch bool
 	// lzx selects the LZX encoder's speed/compression-ratio tradeoff for
 	// every WIM this tool writes (see lzxPresetFlag). It is a stage flag
 	// rather than a constant because it is the single largest determinant
@@ -163,6 +171,9 @@ func main() {
 	flag.StringVar(&stages.bootWimOutPath, "boot-wim-out", "", "path to write the shrunk boot.wim (required if -boot-wim is set)")
 	flag.BoolVar(&stages.skipBootRegTweaks, "skip-boot-regtweaks", false, "skip the requirement-bypass/BitLocker registry tweaks applied to boot.wim's setup image")
 	flag.BoolVar(&stages.skipBootLocaleTrim, "skip-boot-locale-trim", false, "skip removing non-en-US locale directories and their owning WinSxS packages from boot.wim's setup image")
+	flag.BoolVar(&stages.keepNICDrivers, "keep-nic-drivers", false, "keep the 67 vendor network adapter driver families (242 MB) -- required for an image that must bring up networking on arbitrary physical hardware")
+	flag.BoolVar(&stages.keepWebEngines, "keep-web-engines", false, "keep mshtml.dll and edgehtml.dll (89 MB) -- the legacy Trident/EdgeHTML rendering engines")
+	flag.BoolVar(&stages.keepDefenderSearch, "keep-defender-search", false, "keep the Defender and Search servicing packages, whose removal patterns were dead on 25H2 until they were revived and so have never been covered by a passing install test")
 	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
 	// keyed on one flag being non-empty, and it runs last: it consumes what
 	// the install.wim and boot.wim stages above produced.
@@ -371,7 +382,7 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 		fmt.Println("--- Skipping servicing package removal (-skip-packages) ---")
 	} else {
 		fmt.Println("--- Removing servicing packages (bloatware) ---")
-		if err := removeBloatPackages(r2, bt2, root, languageCode); err != nil {
+		if err := removeBloatPackages(r2, bt2, root, languageCode, stages.keepDefenderSearch); err != nil {
 			return fmt.Errorf("remove packages: %w", err)
 		}
 	}
@@ -380,7 +391,7 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 		fmt.Println("--- Skipping aggressive file cleanup (-skip-filecleanup) ---")
 	} else {
 		fmt.Println("--- Performing aggressive manual file deletions ---")
-		if err := runAggressiveFileCleanup(root, bt2, newBlobs, arch, stages.winRE, stages.winREDonorPath, stages.lzx); err != nil {
+		if err := runAggressiveFileCleanup(root, bt2, newBlobs, arch, stages); err != nil {
 			return fmt.Errorf("file cleanup: %w", err)
 		}
 	}
