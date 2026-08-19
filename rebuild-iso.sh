@@ -60,6 +60,24 @@ if [ -n "$AUTOUNATTEND" ]; then
 	cp "$AUTOUNATTEND" "$EXTRACT_DIR/autounattend.xml"
 fi
 
+# WARNING: -boot-info-table below MUTATES "$EXTRACT_DIR/boot/etfsboot.com"
+# in place. genisoimage writes a 56-byte boot info table over offsets
+# 8..63 of the boot image *on disk*, not just into the ISO it emits, so
+# the extracted tree is not left as it was found. Verified 2026-08-19 by
+# sha256: a pristine boot/etfsboot.com from retail media is
+# f425e135aac26b55..., while the working trees under
+# /mnt/extra/nano11go-work carry two different already-patched copies
+# (7568bfc63beb6b52... and f41a9d3866880f22...) -- the table embeds that
+# particular ISO's own PVD/boot-file LBAs, so every run stamps different
+# bytes. Re-running overwrites the same fixed offsets rather than
+# corrupting cumulatively (test10 built from an already-patched tree and
+# booted fine), but it does mean an extracted tree stops being
+# byte-identical to its source media after the first build. Hence the
+# per-run "cp -a isox isox_testN" convention: keep one pristine master
+# and let genisoimage scribble on the copy. gowim's own ISO writer (see
+# its TODO's "ISO image creation subsystem") should build the table into
+# the emitted image only, and leave its inputs alone.
+#
 # efisys_noprompt.bin is Microsoft's own alternate UEFI El Torito boot image
 # (ships alongside efisys.bin in every real Windows ISO, wrapping
 # cdboot_noprompt.efi instead of cdboot.efi) -- used here instead of
