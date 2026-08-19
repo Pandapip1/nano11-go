@@ -363,6 +363,39 @@ var bootFontRemovePatterns = []string{
 
 var fontsExtraRemove = []string{
 	"mingli*", "msjh*", "msyh*", "malgun*", "meiryo*", "yugoth*", "segoeuihistoric.ttf",
+
+	// The PS1's "segoeuihistoric.ttf" above is a dead pattern in the same
+	// family as the 16 dead servicing-package patterns: no such file exists.
+	// Segoe UI Historic really ships as seguihis.ttf, so the script has
+	// never actually removed it. Fixed here rather than by editing the
+	// original entry, which is left in place as the faithful port of what
+	// the script says.
+	//
+	// Measured on a real 25H2 build 26200 Pro image: Windows\Fonts is
+	// 386.6 MB and the PS1's keep-list plus extra-removes already cut it to
+	// 51.2 MB across 88 files, so this is the tail rather than the bulk.
+	// What goes, at the user's request to drop non-essential fonts:
+	//
+	//   seguiemj.ttf  12.45 MB  Segoe UI Emoji -- by far the largest font
+	//       left. Cost is emoji rendering as tofu wherever the shell or an
+	//       app uses one; nothing functional depends on it.
+	//   seguihis.ttf   1.62 MB  Segoe UI Historic: Egyptian hieroglyphs,
+	//       cuneiform, Gothic and friends. Nothing in a desktop install
+	//       renders these.
+	//   segoesc*       1.19 MB  Segoe Script, decorative.
+	//   segoepr*       0.35 MB  Segoe Print, decorative.
+	//
+	// Deliberately kept, despite looking like easy targets:
+	//   SegoeIcons.ttf  Segoe Fluent Icons -- this IS the Windows 11 UI
+	//       icon font. Removing it strips the glyphs out of the shell.
+	//   seguisym.ttf    Segoe UI Symbol, 2.51 MB. Still referenced for
+	//       assorted symbol glyphs in older UI surfaces, so dropping it
+	//       trades 2.5 MB for scattered tofu.
+	//   arial*/times*/cour*/calibri*  ~18 MB of document fonts. Not needed
+	//       by the OS itself, but applications and web content expect the
+	//       metric-standard families to exist, and their absence shows up
+	//       as broad font-fallback weirdness rather than a clean failure.
+	"seguiemj.ttf", "seguihis.ttf", "segoesc*", "segoepr*",
 }
 
 // inputMethodDirsToRemove are the CJK IME resource directories
