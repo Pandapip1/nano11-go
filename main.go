@@ -88,15 +88,15 @@ type stageFlags struct {
 	keepNICDrivers     bool
 	removeWebEngines   bool
 	keepDefenderSearch bool
-	// removeAI removes the Windows AI components (CoreAI discovery/Click-to-Do
-	// overlay, DirectML resource satellites, Windows Update ML models). It is
-	// OFF by default and opt-in, because removing them BREAKS OOBE: a
-	// 2026-08-20 QEMU bisect (this build vs an otherwise-identical -remove-ai
-	// build) showed CoreAI's absence drops OOBE to the "Why did my PC
-	// restart?" recovery screen, exactly like the web engines -- CoreAI is an
-	// OOBE-integrated SystemApp in 25H2, not a standalone feature payload as
-	// first assumed. Only ~42 MB total, so it is not worth an OOBE break for
-	// the default image; -remove-ai opts in for images that never run OOBE.
+	// removeAI removes the ESSENTIAL AI component, the CoreAI SystemApp, on
+	// top of the non-essential AI resources/data that file cleanup removes by
+	// default. It is OFF by default and opt-in, because removing CoreAI BREAKS
+	// OOBE: a 2026-08-20 QEMU bisect showed its absence drops OOBE to the "Why
+	// did my PC restart?" recovery screen -- CoreAI is an OOBE-integrated
+	// SystemApp in 25H2, exactly like edgehtml. The non-essential AI bits
+	// (DirectML MUI resources ~21 MB, WU ML models ~1 MB) are OOBE-safe and
+	// always removed; only CoreAI's ~19 MB is gated here. See filecleanup.go's
+	// essential/non-essential split. -remove-ai opts in for never-OOBE images.
 	removeAI bool
 	// lzx selects the LZX encoder's speed/compression-ratio tradeoff for
 	// every WIM this tool writes (see lzxPresetFlag). It is a stage flag
@@ -190,9 +190,9 @@ func main() {
 	flag.BoolVar(&stages.skipBootLocaleTrim, "skip-boot-locale-trim", false, "skip removing non-en-US locale directories and their owning WinSxS packages from boot.wim's setup image")
 	flag.BoolVar(&stages.skipBootFileCleanup, "skip-boot-filecleanup", false, "skip the font/speech/enterprise-storage-driver trim applied to boot.wim's setup image")
 	flag.BoolVar(&stages.keepNICDrivers, "keep-nic-drivers", false, "keep the 67 vendor network adapter driver families (242 MB) -- required for an image that must bring up networking on arbitrary physical hardware")
-	flag.BoolVar(&stages.removeWebEngines, "remove-web-engines", false, "remove mshtml.dll and edgehtml.dll (89 MB) -- BREAKS OOBE (Windows 11's HTML-based CloudExperienceHost cannot render), so off by default; only for images that will never run OOBE")
+	flag.BoolVar(&stages.removeWebEngines, "remove-web-engines", false, "also remove the essential web engine edgehtml.dll (~46 MB) -- BREAKS OOBE (CloudExperienceHost renders through EdgeHTML), so off by default; mshtml.dll is already removed by default as non-essential; only for images that never run OOBE")
 	flag.BoolVar(&stages.keepDefenderSearch, "keep-defender-search", false, "keep the Defender and Search servicing packages, whose removal patterns were dead on 25H2 until they were revived and so have never been covered by a passing install test")
-	flag.BoolVar(&stages.removeAI, "remove-ai", false, "remove the Windows AI components (CoreAI overlay ~19 MB, DirectML resources ~21 MB, WU ML models ~1 MB) -- BREAKS OOBE (CoreAI is OOBE-integrated in 25H2, bisected 2026-08-20), so off by default; only for images that never run OOBE")
+	flag.BoolVar(&stages.removeAI, "remove-ai", false, "also remove the essential CoreAI SystemApp (~19 MB) -- BREAKS OOBE (CoreAI is OOBE-integrated in 25H2, bisected 2026-08-20), so off by default; the DirectML resources + WU ML models are already removed by default as non-essential; only for images that never run OOBE")
 	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
 	// keyed on one flag being non-empty, and it runs last: it consumes what
 	// the install.wim and boot.wim stages above produced.

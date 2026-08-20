@@ -248,3 +248,35 @@ than shipping by default.
 the 3.6 GB webonly build** -- the winre stub is the whole win. install.wim
 2.2 GB. ISOs: nano11go_keepai.iso (validated default), nano11go_final_ai.iso
 (AI-removed, OOBE-broken, kept only as the bisect's negative control).
+
+---
+
+## 2026-08-20 (later) -- HTML/AI split into essential vs non-essential
+
+The two all-or-nothing OOBE-breaking cuts (web engines, AI) are now each split
+into two tiers, and the non-essential tier is removed BY DEFAULT (validated
+OOBE-safe), while the essential tier stays behind its opt-in flag.
+
+HTML engines: a QEMU bisect settled which engine OOBE needs. Removing BOTH
+mshtml+edgehtml breaks OOBE; removing ONLY mshtml does NOT (OOBE reached the
+region page). So:
+  - NON-ESSENTIAL: mshtml.dll (Trident, ~43 MB) -- removed by default.
+  - ESSENTIAL: edgehtml.dll (EdgeHTML, ~46 MB) -- CloudExperienceHost renders
+    through it; kept unless -remove-web-engines.
+
+AI: from the 2026-08-20 bisect:
+  - NON-ESSENTIAL: DirectML .mun resources (~21 MB) + WUModels (~1 MB) --
+    removed by default.
+  - ESSENTIAL: CoreAI SystemApp (~19 MB), OOBE-integrated -- kept unless
+    -remove-ai.
+
+Validated: a build with only the non-essential tier removed (mshtml +
+DirectML.mun + WUModels; edgehtml + CoreAI kept; winre stubbed) installed and
+reached the OOBE region/keyboard pages (shots_split/PROOF_oobe_region_ok.png).
+The -remove-web-engines / -remove-ai flags now remove only the essential
+remainder on top of the default non-essential removal (net effect unchanged
+for anyone who set them: everything still comes out).
+
+Default ISO now 3,193,608,192 bytes (nano11go_split.iso), ~27 MB below the
+AI-kept build, from the non-essential removal -- on top of the winre stub's
+606 MB. install.wim 2.2 GB.

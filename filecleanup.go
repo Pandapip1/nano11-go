@@ -551,19 +551,10 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		// certificate update -- not Secure Boot itself, and not boot.
 		winDir + `\System32\SecureBootUpdates\BucketConfidenceData.cab`,
 
-		// Legacy web rendering engines, 89 MB across the four files, removed
-		// at the user's explicit request. Both are dead weight in this image
-		// in the sense that their front ends are already gone -- the pipeline
-		// removes Edge, Edge WebView and the InternetExplorer optional
-		// package -- but unlike everything else cut above, these are code
-		// with real COM surface rather than data or drivers:
-		//
-		//   edgehtml.dll  46 MB  the legacy UWP WebView engine. Anything
-		//       still hosting the old WebView control loses rendering.
-		//   mshtml.dll    43 MB  Trident. This is the wider-reaching of the
-		//       two: .hta scripts stop working, and any legacy application
-		//       or installer that COM-instantiates MSHTML to render markup
-		//       will fail rather than degrade.
+		// Web rendering engines (mshtml/edgehtml) are handled below, split
+		// into a non-essential tier removed by default and an essential tier
+		// kept unless -remove-web-engines -- see the essential/non-essential
+		// blocks after this mustRemove loop.
 
 		// System sounds: 21.2 MB of .wav across 85 files. Nothing loads a
 		// wav at boot or during Setup; the worst case is a silent event.
@@ -618,25 +609,6 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	// removal above and with the CJK IME package/AppX removal; SHARED is
 	// left in place as cheap insurance, since 7.3 MB is not worth guessing
 	// about what else might link against it.
-	// Removing the legacy web engines is OFF by default because it breaks a
-	// real install: verified 2026-08-19 by a three-build QEMU bisect
-	// (q35+KVM+OVMF, clean hands-off installs). With mshtml.dll/edgehtml.dll
-	// removed, Setup's oobeSystem pass fails to reach the desktop -- the
-	// Windows OOBE "Why did my PC restart? There's a problem that's keeping
-	// us from getting your PC ready to use" recovery screen -- because
-	// Windows 11's OOBE (CloudExperienceHost) is an HTML-hosted app that
-	// renders through these engines. A build that KEEPS them but still
-	// removes everything else the same run does (including the vendor NIC
-	// drivers and the Defender/Search packages) reached the full desktop,
-	// isolating the OOBE break to these four files alone. -remove-web-engines
-	// opts back into the 89 MB cut for images that will never run OOBE
-	// (e.g. captured/generalized further downstream).
-	if stages.removeWebEngines {
-		fmt.Println("Removing mshtml.dll/edgehtml.dll (-remove-web-engines; breaks OOBE -- see comment)")
-		mustRemove = append(mustRemove,
-			winDir+`\System32\edgehtml.dll`, winDir+`\SysWOW64\edgehtml.dll`,
-			winDir+`\System32\mshtml.dll`, winDir+`\SysWOW64\mshtml.dll`)
-	}
 	for _, ime := range imeDirsToRemove {
 		mustRemove = append(mustRemove, winDir+`\System32\IME\`+ime)
 	}
@@ -646,51 +618,62 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		}
 	}
 
-	// Windows AI components. OFF by default and opt-in (-remove-ai), because
-	// removing them BREAKS OOBE -- confirmed 2026-08-20 by a QEMU bisect
-	// (q35+KVM+OVMF, clean installs): this exact set removed drops OOBE to the
-	// "Why did my PC restart? There's a problem that's keeping us from getting
-	// your PC ready to use" recovery screen, while an otherwise-identical build
-	// with the set KEPT rendered OOBE (region/keyboard pages) and navigated
-	// normally. So CoreAI, first assumed to be a self-contained feature app,
-	// is actually an OOBE-integrated SystemApp in 25H2 -- the same failure mode
-	// as the web engines above. The three items:
+	// --- HTML engines and Windows AI, split by OOBE-criticality ---
 	//
-	//   SystemApps\MicrosoftWindows.Client.CoreAI_*   19.1 MB  the AI
-	//       "discovery overlay" / Click-to-Do system app. This is the piece
-	//       OOBE (CloudExperienceHost) depends on; its removal is what breaks
-	//       first boot.
-	//   SystemResources\directml*.dll.mun             21.2 MB  the MUI
-	//       resource satellites for DirectML. Resource-only forks; the
-	//       directml.dll code in the WindowsAppRuntime framework package is
-	//       left untouched. Very likely OOBE-safe on their own, but bundled
-	//       into the same opt-in flag rather than shipped by default, since
-	//       the subset has not been separately install-tested.
-	//   WUModels\*.onnx                                1.3 MB  the on-device
-	//       ML models Windows Update uses to predict good install/restart
-	//       windows. Pure data; WU falls back to non-ML scheduling.
+	// The web engines and the AI payload were each originally an all-or-
+	// nothing opt-in cut that broke OOBE. A 2026-08-20 QEMU bisect
+	// (q35+KVM+OVMF, clean installs) split each into the piece OOBE actually
+	// needs and the piece it does not:
 	//
-	// The WindowsAppRuntime "CBS" packages that also carry AI bits
-	// (DirectML.dll, the SemanticIndex/AiFabric DLLs) are deliberately left
-	// whole: WindowsAppRuntime is the general WinUI/WinAppSDK runtime that
-	// inbox apps depend on, not an AI-only package, so surgically pulling
-	// individual DLLs out of it is exactly the kind of framework-breaking
-	// cut avoided elsewhere in this file.
-	if !stages.removeAI {
-		fmt.Println("Keeping Windows AI components (removal breaks OOBE; pass -remove-ai to force)")
-	} else {
-		fmt.Println("Removing Windows AI components (-remove-ai; breaks OOBE -- see comment)...")
-		aiRemove := []string{
-			winDir + `\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy`,
-			winDir + `\SystemResources\directml.dll.mun`,
-			winDir + `\SystemResources\directml_x64.dll.mun`,
-			winDir + `\SystemResources\directml_arm64.dll.mun`,
-			winDir + `\WUModels`,
+	//   OOBE (Windows 11's CloudExperienceHost, an HTML-hosted app) fails to
+	//   the "Why did my PC restart? There's a problem that's keeping us from
+	//   getting your PC ready to use" recovery screen when the ESSENTIAL
+	//   pieces are gone, and reaches the region/keyboard pages when they are
+	//   present. Isolation: removing BOTH web engines breaks OOBE; removing
+	//   only mshtml (Trident) does NOT -- so edgehtml (EdgeHTML), the engine
+	//   CloudExperienceHost renders through, is the essential one and mshtml
+	//   is safe to drop. On the AI side, CoreAI is an OOBE-integrated
+	//   SystemApp in 25H2 (its removal is what broke OOBE), while the DirectML
+	//   MUI resources and the WU ML models are inert data.
+	//
+	// NON-ESSENTIAL tier: removed by default (bisected OOBE-safe).
+	nonEssential := []string{
+		// mshtml.dll (Trident, ~43 MB across both arches). Cost: legacy .hta
+		// scripts and apps that COM-instantiate MSHTML lose HTML rendering.
+		// The directml.dll code in the WindowsAppRuntime framework package is
+		// deliberately NOT touched -- only its MUI resource forks below.
+		winDir + `\System32\mshtml.dll`,
+		winDir + `\SysWOW64\mshtml.dll`,
+		// DirectML MUI resource satellites (~21 MB): resource-only forks.
+		winDir + `\SystemResources\directml.dll.mun`,
+		winDir + `\SystemResources\directml_x64.dll.mun`,
+		winDir + `\SystemResources\directml_arm64.dll.mun`,
+		// Windows Update on-device ML models (~1 MB): pure data; WU falls
+		// back to non-ML restart scheduling.
+		winDir + `\WUModels`,
+	}
+	fmt.Println("Removing non-essential HTML/AI components (mshtml, DirectML resources, WU ML models)...")
+	for _, path := range nonEssential {
+		if err := removeIfExists(root, bt, path); err != nil {
+			return fmt.Errorf("remove non-essential component %s: %w", path, err)
 		}
-		for _, path := range aiRemove {
+	}
+
+	// ESSENTIAL tier: kept by default because removal breaks OOBE; each is
+	// opt-in for images that will never run OOBE (captured/generalized
+	// downstream). edgehtml.dll ~46 MB, CoreAI ~19 MB.
+	if stages.removeWebEngines {
+		fmt.Println("Removing edgehtml.dll (-remove-web-engines; breaks OOBE -- see comment)")
+		for _, path := range []string{winDir + `\System32\edgehtml.dll`, winDir + `\SysWOW64\edgehtml.dll`} {
 			if err := removeIfExists(root, bt, path); err != nil {
-				return fmt.Errorf("remove AI component %s: %w", path, err)
+				return fmt.Errorf("remove essential web engine %s: %w", path, err)
 			}
+		}
+	}
+	if stages.removeAI {
+		fmt.Println("Removing CoreAI SystemApp (-remove-ai; breaks OOBE -- see comment)")
+		if err := removeIfExists(root, bt, winDir+`\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy`); err != nil {
+			return fmt.Errorf("remove essential AI component: %w", err)
 		}
 	}
 
