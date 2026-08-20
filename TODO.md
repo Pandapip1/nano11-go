@@ -157,3 +157,43 @@ recompression (gowim's LZMS encoder is unverified against an independent
 decoder) and DISM `/Cleanup-Image /StartComponentCleanup /ResetBase` (no
 offline equivalent, undocumented COMPONENTS-hive-internal accounting -- see
 gowim's own TODO.md for the full research writeup).
+
+## 2026-08-19 validation findings (aggressive-removal additions)
+
+**CONFIRMED REGRESSION: current build fails OOBE ("boot to desktop").** A
+clean, hands-off QEMU install (q35+KVM+OVMF, fresh disk, no key input during
+OOBE) of the current build reaches the file-copy phase and the post-install
+lock screen, then fails in the oobeSystem pass with the Windows OOBE-recovery
+screen: "Why did my PC restart? There's a problem that's keeping us from
+getting your PC ready to use" (it asks to connect to a network to download a
+repair update -- which it cannot, since the vendor NIC drivers are removed).
+This was reproduced WITHOUT the earlier key-mashing confound, so it is
+attributable to the debloat, not to test interference. The install.wim
+file-copy itself is fine (explorer.exe present, files applied); the failure
+is specifically OOBE finalization.
+
+Bisect scaffolding added for this: `-keep-nic-drivers`, `-keep-web-engines`,
+`-keep-defender-search` (main.go), each isolating one 2026-08-19 addition.
+Leading hypothesis: web engines (mshtml/edgehtml) -- OOBE's
+CloudExperienceHost renders via HTML. Bisect in progress; do NOT ship the
+current default until the OOBE-breaking removal is identified and either
+fixed or moved behind a default-off flag.
+
+**Servicing-package removal is ~worthless for size (measured).** A blob-level
+measurement harness (measure_test.go, run against real 25H2 build 26200 Pro)
+shows every servicing-package pattern reclaims only its .mum bytes -- the
+payload lives in WinSxS (wiped anyway) or hardlinked System32 copies. Totals:
+all virtualization patterns (Hyper-V/WSL/Containers, 460 packages) ~85 KB;
+the revived Defender+Search patterns (43 packages) ~30 KB. The revival is
+therefore almost pure breakage risk for no size benefit -- hence gated behind
+-keep-defender-search, and a candidate to default to ON (keep).
+
+**winre.wim donor-stub VERIFIED (635 MB, the biggest single win).**
+`-winre-mode=donor-stub` was run end to end and reached the Windows logon
+screen in QEMU -- Setup's entire SafeOS phase (extract/mount/file-copy/
+commit) now passes. install.wim drops from 3,286,450,368 (winre-keep) to
+2,651,137,264 (donor-stub), a real 635.3 MB. Combined with the rest of the
+2026-08-19 file cleanup, install.wim = 2,317,296,126. This is the highest-
+value size change in the project and should be considered for default-on once
+the OOBE regression above is resolved (they are independent: winre-keep also
+hits the OOBE failure).
