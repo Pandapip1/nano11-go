@@ -86,7 +86,7 @@ type stageFlags struct {
 	// and rebuilding. They are also genuinely useful on their own: an image
 	// destined for physical hardware wants keepNICDrivers, for instance.
 	keepNICDrivers     bool
-	keepWebEngines     bool
+	removeWebEngines   bool
 	keepDefenderSearch bool
 	// lzx selects the LZX encoder's speed/compression-ratio tradeoff for
 	// every WIM this tool writes (see lzxPresetFlag). It is a stage flag
@@ -174,7 +174,7 @@ func main() {
 	flag.BoolVar(&stages.skipBootLocaleTrim, "skip-boot-locale-trim", false, "skip removing non-en-US locale directories and their owning WinSxS packages from boot.wim's setup image")
 	flag.BoolVar(&stages.skipBootFileCleanup, "skip-boot-filecleanup", false, "skip the font/speech/enterprise-storage-driver trim applied to boot.wim's setup image")
 	flag.BoolVar(&stages.keepNICDrivers, "keep-nic-drivers", false, "keep the 67 vendor network adapter driver families (242 MB) -- required for an image that must bring up networking on arbitrary physical hardware")
-	flag.BoolVar(&stages.keepWebEngines, "keep-web-engines", false, "keep mshtml.dll and edgehtml.dll (89 MB) -- the legacy Trident/EdgeHTML rendering engines")
+	flag.BoolVar(&stages.removeWebEngines, "remove-web-engines", false, "remove mshtml.dll and edgehtml.dll (89 MB) -- BREAKS OOBE (Windows 11's HTML-based CloudExperienceHost cannot render), so off by default; only for images that will never run OOBE")
 	flag.BoolVar(&stages.keepDefenderSearch, "keep-defender-search", false, "keep the Defender and Search servicing packages, whose removal patterns were dead on 25H2 until they were revived and so have never been covered by a passing install test")
 	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
 	// keyed on one flag being non-empty, and it runs last: it consumes what

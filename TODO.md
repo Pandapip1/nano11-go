@@ -172,12 +172,24 @@ attributable to the debloat, not to test interference. The install.wim
 file-copy itself is fine (explorer.exe present, files applied); the failure
 is specifically OOBE finalization.
 
-Bisect scaffolding added for this: `-keep-nic-drivers`, `-keep-web-engines`,
-`-keep-defender-search` (main.go), each isolating one 2026-08-19 addition.
-Leading hypothesis: web engines (mshtml/edgehtml) -- OOBE's
-CloudExperienceHost renders via HTML. Bisect in progress; do NOT ship the
-current default until the OOBE-breaking removal is identified and either
-fixed or moved behind a default-off flag.
+**BISECT COMPLETE -- root cause is the web-engine removal (mshtml/edgehtml).**
+A three-build QEMU ladder (each a clean hands-off install to the desktop):
+  - current (NIC + web engines + Defender/Search all removed): FAILS OOBE.
+  - all-keep (all three reverted): reaches full desktop.
+  - web-only (web engines KEPT, but NIC drivers AND Defender/Search still
+    removed): reaches full desktop.
+web-only keeps only mshtml.dll/edgehtml.dll yet passes, while the 242 MB of
+vendor NIC drivers and the Defender/Search packages stay removed -- so those
+are confirmed OOBE-safe and the break is the four web-engine files alone.
+Cause: Windows 11 OOBE (CloudExperienceHost) is HTML-hosted and renders
+through Trident/EdgeHTML.
+
+FIXED: the web-engine removal is now OFF by default. The flag was inverted
+from `-keep-web-engines` (default remove) to `-remove-web-engines` (default
+keep), documented in filecleanup.go as breaking OOBE. `-keep-nic-drivers`
+and `-keep-defender-search` remain default-off (their removals are OOBE-safe;
+those flags exist for hardware-compatibility / Defender-retention choices,
+not correctness). The 89 MB web-engine cut is the price of a bootable image.
 
 **Servicing-package removal is ~worthless for size (measured).** A blob-level
 measurement harness (measure_test.go, run against real 25H2 build 26200 Pro)

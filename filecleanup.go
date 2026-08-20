@@ -583,9 +583,21 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	// removal above and with the CJK IME package/AppX removal; SHARED is
 	// left in place as cheap insurance, since 7.3 MB is not worth guessing
 	// about what else might link against it.
-	if stages.keepWebEngines {
-		fmt.Println("Keeping mshtml.dll/edgehtml.dll (-keep-web-engines)")
-	} else {
+	// Removing the legacy web engines is OFF by default because it breaks a
+	// real install: verified 2026-08-19 by a three-build QEMU bisect
+	// (q35+KVM+OVMF, clean hands-off installs). With mshtml.dll/edgehtml.dll
+	// removed, Setup's oobeSystem pass fails to reach the desktop -- the
+	// Windows OOBE "Why did my PC restart? There's a problem that's keeping
+	// us from getting your PC ready to use" recovery screen -- because
+	// Windows 11's OOBE (CloudExperienceHost) is an HTML-hosted app that
+	// renders through these engines. A build that KEEPS them but still
+	// removes everything else the same run does (including the vendor NIC
+	// drivers and the Defender/Search packages) reached the full desktop,
+	// isolating the OOBE break to these four files alone. -remove-web-engines
+	// opts back into the 89 MB cut for images that will never run OOBE
+	// (e.g. captured/generalized further downstream).
+	if stages.removeWebEngines {
+		fmt.Println("Removing mshtml.dll/edgehtml.dll (-remove-web-engines; breaks OOBE -- see comment)")
 		mustRemove = append(mustRemove,
 			winDir+`\System32\edgehtml.dll`, winDir+`\SysWOW64\edgehtml.dll`,
 			winDir+`\System32\mshtml.dll`, winDir+`\SysWOW64\mshtml.dll`)
