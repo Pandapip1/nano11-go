@@ -88,6 +88,16 @@ type stageFlags struct {
 	keepNICDrivers     bool
 	removeWebEngines   bool
 	keepDefenderSearch bool
+	// removeAI removes the Windows AI components (CoreAI discovery/Click-to-Do
+	// overlay, DirectML resource satellites, Windows Update ML models). It is
+	// OFF by default and opt-in, because removing them BREAKS OOBE: a
+	// 2026-08-20 QEMU bisect (this build vs an otherwise-identical -remove-ai
+	// build) showed CoreAI's absence drops OOBE to the "Why did my PC
+	// restart?" recovery screen, exactly like the web engines -- CoreAI is an
+	// OOBE-integrated SystemApp in 25H2, not a standalone feature payload as
+	// first assumed. Only ~42 MB total, so it is not worth an OOBE break for
+	// the default image; -remove-ai opts in for images that never run OOBE.
+	removeAI bool
 	// lzx selects the LZX encoder's speed/compression-ratio tradeoff for
 	// every WIM this tool writes (see lzxPresetFlag). It is a stage flag
 	// rather than a constant because it is the single largest determinant
@@ -160,14 +170,20 @@ func main() {
 	outPath := flag.String("out", "", "path to write the debloated single-image install.wim")
 	imageIndex := flag.Int("image", 0, "1-based image index to debloat (0 = list images and exit)")
 	var stages stageFlags
+	// winre.wim (634 MB compressed) is the single largest item in the image
+	// and the donor-stub cut for it (~606 MB) was validated by a real
+	// Setup.exe install this session, so it is the default. The donor is
+	// auto-sourced from the image's own winre.wim (see run()); -winre-donor
+	// is only needed to override it, and -winre-mode=keep opts out entirely.
+	stages.winRE = winREDonorStub
 	flag.BoolVar(&stages.skipAppx, "skip-appx", false, "skip provisioned AppX package removal")
 	flag.BoolVar(&stages.skipPackages, "skip-packages", false, "skip servicing package removal by pattern")
 	flag.BoolVar(&stages.skipFileCleanup, "skip-filecleanup", false, "skip aggressive manual file deletions")
 	flag.BoolVar(&stages.skipWinSxSWipe, "skip-winsxs-wipe", false, "skip the WinSxS wipe-to-allowlist (the most aggressive, most likely-to-break-boot step)")
 	flag.BoolVar(&stages.skipRegTweaks, "skip-regtweaks", false, "skip registry tweaks + autounattend.xml install")
 	flag.BoolVar(&stages.skipServices, "skip-services", false, "skip service removal")
-	flag.Var(winREModeFlag{&stages.winRE}, "winre-mode", "what to do to winre.wim during file cleanup: keep (default, safe) or donor-stub (graft real content from -winre-donor)")
-	flag.StringVar(&stages.winREDonorPath, "winre-donor", "", "path to a real, extracted winre.wim to graft content from when -winre-mode=donor-stub")
+	flag.Var(winREModeFlag{&stages.winRE}, "winre-mode", "what to do to winre.wim during file cleanup: donor-stub (default, ~606 MB saving, validated) or keep (leave the full recovery image in place)")
+	flag.StringVar(&stages.winREDonorPath, "winre-donor", "", "override the donor winre.wim for -winre-mode=donor-stub (default: auto-sourced from the image's own winre.wim, which needs no external file)")
 	flag.StringVar(&stages.bootWimPath, "boot-wim", "", "path to boot.wim extracted from the ISO; if set, shrinks it to just the setup image (index 2), discarding the WinPE boot image")
 	flag.StringVar(&stages.bootWimOutPath, "boot-wim-out", "", "path to write the shrunk boot.wim (required if -boot-wim is set)")
 	flag.BoolVar(&stages.skipBootRegTweaks, "skip-boot-regtweaks", false, "skip the requirement-bypass/BitLocker registry tweaks applied to boot.wim's setup image")
@@ -176,6 +192,7 @@ func main() {
 	flag.BoolVar(&stages.keepNICDrivers, "keep-nic-drivers", false, "keep the 67 vendor network adapter driver families (242 MB) -- required for an image that must bring up networking on arbitrary physical hardware")
 	flag.BoolVar(&stages.removeWebEngines, "remove-web-engines", false, "remove mshtml.dll and edgehtml.dll (89 MB) -- BREAKS OOBE (Windows 11's HTML-based CloudExperienceHost cannot render), so off by default; only for images that will never run OOBE")
 	flag.BoolVar(&stages.keepDefenderSearch, "keep-defender-search", false, "keep the Defender and Search servicing packages, whose removal patterns were dead on 25H2 until they were revived and so have never been covered by a passing install test")
+	flag.BoolVar(&stages.removeAI, "remove-ai", false, "remove the Windows AI components (CoreAI overlay ~19 MB, DirectML resources ~21 MB, WU ML models ~1 MB) -- BREAKS OOBE (CoreAI is OOBE-integrated in 25H2, bisected 2026-08-20), so off by default; only for images that never run OOBE")
 	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
 	// keyed on one flag being non-empty, and it runs last: it consumes what
 	// the install.wim and boot.wim stages above produced.
@@ -392,6 +409,24 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 	if stages.skipFileCleanup {
 		fmt.Println("--- Skipping aggressive file cleanup (-skip-filecleanup) ---")
 	} else {
+		// The donor for -winre-mode=donor-stub is the image's own winre.wim
+		// (the stub grafts that same image's real Windows\Boot subtree back
+		// in), so auto-source it here unless the user passed an explicit
+		// -winre-donor. Done in run() rather than inside file cleanup because
+		// this is where the image reader (r2) is in scope.
+		if stages.winRE == winREDonorStub && stages.winREDonorPath == "" {
+			donorPath, cleanupDonor, err := extractWinREDonorToTemp(r2, root, bt2)
+			if err != nil {
+				return fmt.Errorf("auto-source winre donor: %w", err)
+			}
+			defer cleanupDonor()
+			if donorPath == "" {
+				fmt.Println("No winre.wim present in image; skipping winre.wim stubbing")
+				stages.winRE = winREKeep
+			} else {
+				stages.winREDonorPath = donorPath
+			}
+		}
 		fmt.Println("--- Performing aggressive manual file deletions ---")
 		if err := runAggressiveFileCleanup(root, bt2, newBlobs, arch, stages); err != nil {
 			return fmt.Errorf("file cleanup: %w", err)

@@ -209,3 +209,42 @@ commit) now passes. install.wim drops from 3,286,450,368 (winre-keep) to
 value size change in the project and should be considered for default-on once
 the OOBE regression above is resolved (they are independent: winre-keep also
 hits the OOBE failure).
+
+---
+
+## 2026-08-20 -- winre-stub now default; AI-removal bisected + reverted to opt-in
+
+Two changes shipped and validated in QEMU (q35+KVM+OVMF, clean installs).
+
+**winre donor-stub is now DEFAULT (`-winre-mode` defaults to `donor-stub`).**
+The donor is auto-sourced from the image's *own* winre.wim at cleanup time
+(extractWinREDonorToTemp reads `\Windows\System32\Recovery\winre.wim`, writes
+it to a temp file, grafts its real `\Windows\Boot` subtree into the stub), so
+no external `-winre-donor` is needed. `-winre-mode=keep` opts back out.
+Validated: the default build installed through Setup's full SafeOS phase and
+booted into OOBE (region/keyboard pages rendered) in two separate runs.
+Winre.wim inside install.wim: 672,970,588 -> 29,978,979 bytes.
+
+**AI-removal (`-remove-ai`) BREAKS OOBE -- reverted to opt-in, default OFF.**
+Added a Windows-AI removal stage (CoreAI overlay ~19 MB + DirectML `.mun`
+resources ~21 MB + WUModels ~1 MB). A three-way test settled it:
+  - build with AI removed  (winre stub on) -> OOBE FAILS at the "Why did my
+    PC restart? There's a problem that's keeping us from getting your PC
+    ready to use" recovery screen (shots_final/FAILURE_oobe_why_restart.png).
+  - build with AI KEPT     (winre stub on) -> OOBE renders and navigates
+    normally: region -> keyboard pages (shots_ka/PROOF_oobe_region_ok.png,
+    PROOF_oobe_keyboard_ok.png).
+Since winre.wim plays no part in OOBE and is identical between the two builds,
+the break is the AI removal -- specifically CoreAI, which turns out to be an
+OOBE-integrated SystemApp in 25H2 (same failure mode as the web engines), not
+the self-contained feature app first assumed. Only ~42 MB / 27 MB-on-ISO, so
+not worth an OOBE break: the removal is now behind `-remove-ai` (default keep,
+documented as breaking OOBE), mirroring `-remove-web-engines`. The DirectML
+`.mun` + WUModels subset (~22 MB) is very likely OOBE-safe on its own but has
+not been separately install-tested, so it rides the same opt-in flag rather
+than shipping by default.
+
+**Shippable, validated default now: ISO 3,220,226,048 bytes (3.0 GB), from
+the 3.6 GB webonly build** -- the winre stub is the whole win. install.wim
+2.2 GB. ISOs: nano11go_keepai.iso (validated default), nano11go_final_ai.iso
+(AI-removed, OOBE-broken, kept only as the bisect's negative control).

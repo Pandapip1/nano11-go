@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +23,40 @@ import (
 // attributes on source path ...") when it was missing, not a guess.
 var winREStubIncludePaths = []string{
 	`Windows\Boot`,
+}
+
+// extractWinREDonorToTemp writes the image's own winre.wim out to a temporary
+// file so it can serve as the donor for winREStubFromDonor. The winre.wim
+// already at recoveryWimPath IS the natural donor: the stub grafts that same
+// image's real Windows\Boot subtree back into an otherwise-empty shell, so
+// -winre-mode=donor-stub needs no external -winre-donor by default. Returns
+// ("", a no-op cleanup, nil) when the image has no winre.wim, so the caller
+// can fall back to leaving winre handling alone rather than failing. The
+// returned cleanup removes the temp file and must be called by the caller.
+func extractWinREDonorToTemp(r *wim.Reader, root *wim.DirEntry, bt *wim.BlobTable) (string, func(), error) {
+	noop := func() {}
+	data, err := r.ReadFile(root, bt, recoveryWimPath)
+	if err != nil {
+		if errors.Is(err, wim.ErrNotFound) {
+			return "", noop, nil
+		}
+		return "", noop, fmt.Errorf("read %s for donor: %w", recoveryWimPath, err)
+	}
+	f, err := os.CreateTemp("", "nano11-winre-donor-*.wim")
+	if err != nil {
+		return "", noop, err
+	}
+	cleanup := func() { os.Remove(f.Name()) }
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		cleanup()
+		return "", noop, err
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	return f.Name(), cleanup, nil
 }
 
 // winREStubFromDonor builds a single-image, bootable-flagged WIM stub,
@@ -611,6 +646,54 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		}
 	}
 
+	// Windows AI components. OFF by default and opt-in (-remove-ai), because
+	// removing them BREAKS OOBE -- confirmed 2026-08-20 by a QEMU bisect
+	// (q35+KVM+OVMF, clean installs): this exact set removed drops OOBE to the
+	// "Why did my PC restart? There's a problem that's keeping us from getting
+	// your PC ready to use" recovery screen, while an otherwise-identical build
+	// with the set KEPT rendered OOBE (region/keyboard pages) and navigated
+	// normally. So CoreAI, first assumed to be a self-contained feature app,
+	// is actually an OOBE-integrated SystemApp in 25H2 -- the same failure mode
+	// as the web engines above. The three items:
+	//
+	//   SystemApps\MicrosoftWindows.Client.CoreAI_*   19.1 MB  the AI
+	//       "discovery overlay" / Click-to-Do system app. This is the piece
+	//       OOBE (CloudExperienceHost) depends on; its removal is what breaks
+	//       first boot.
+	//   SystemResources\directml*.dll.mun             21.2 MB  the MUI
+	//       resource satellites for DirectML. Resource-only forks; the
+	//       directml.dll code in the WindowsAppRuntime framework package is
+	//       left untouched. Very likely OOBE-safe on their own, but bundled
+	//       into the same opt-in flag rather than shipped by default, since
+	//       the subset has not been separately install-tested.
+	//   WUModels\*.onnx                                1.3 MB  the on-device
+	//       ML models Windows Update uses to predict good install/restart
+	//       windows. Pure data; WU falls back to non-ML scheduling.
+	//
+	// The WindowsAppRuntime "CBS" packages that also carry AI bits
+	// (DirectML.dll, the SemanticIndex/AiFabric DLLs) are deliberately left
+	// whole: WindowsAppRuntime is the general WinUI/WinAppSDK runtime that
+	// inbox apps depend on, not an AI-only package, so surgically pulling
+	// individual DLLs out of it is exactly the kind of framework-breaking
+	// cut avoided elsewhere in this file.
+	if !stages.removeAI {
+		fmt.Println("Keeping Windows AI components (removal breaks OOBE; pass -remove-ai to force)")
+	} else {
+		fmt.Println("Removing Windows AI components (-remove-ai; breaks OOBE -- see comment)...")
+		aiRemove := []string{
+			winDir + `\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy`,
+			winDir + `\SystemResources\directml.dll.mun`,
+			winDir + `\SystemResources\directml_x64.dll.mun`,
+			winDir + `\SystemResources\directml_arm64.dll.mun`,
+			winDir + `\WUModels`,
+		}
+		for _, path := range aiRemove {
+			if err := removeIfExists(root, bt, path); err != nil {
+				return fmt.Errorf("remove AI component %s: %w", path, err)
+			}
+		}
+	}
+
 	fmt.Println("Removing Edge (Program Files (x86)\\Microsoft\\Edge*)...")
 	if err := removeMatchingChildren(root, bt, edgeProgramFiles, []string{"Edge*"}, "edge"); err != nil {
 		return err
@@ -662,9 +745,9 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	//     everything needed up front.
 	switch winRE {
 	case winREKeep:
-		fmt.Println("Skipping winre.wim removal (unsafe before a Setup.exe-driven install by default -- see comment, pass -winre-mode to opt into an alternative)")
+		fmt.Println("Keeping winre.wim intact (-winre-mode=keep; forgoes the ~606 MB donor-stub saving)")
 	case winREDonorStub:
-		fmt.Printf("Replacing winre.wim with a stub grafted from %s (-winre-mode=donor-stub; bisection in progress, see comment)...\n", winREDonorPath)
+		fmt.Printf("Replacing winre.wim with a stub grafted from %s (default; ~606 MB saving, validated by a real install)...\n", winREDonorPath)
 		stub, err := winREStubFromDonor(winREDonorPath, lzxOpts)
 		if err != nil {
 			return fmt.Errorf("build donor winre.wim stub: %w", err)
