@@ -67,18 +67,19 @@ import (
 // stage actually causes it) without editing code and rebuilding between
 // attempts -- important given each full run costs tens of minutes.
 type stageFlags struct {
-	skipAppx           bool
-	skipPackages       bool
-	skipFileCleanup    bool
-	skipWinSxSWipe     bool
-	skipRegTweaks      bool
-	skipServices       bool
-	winRE              winREMode
-	winREDonorPath     string
-	bootWimPath        string
-	bootWimOutPath     string
-	skipBootRegTweaks  bool
-	skipBootLocaleTrim bool
+	skipAppx            bool
+	skipPackages        bool
+	skipFileCleanup     bool
+	skipWinSxSWipe      bool
+	skipRegTweaks       bool
+	skipServices        bool
+	winRE               winREMode
+	winREDonorPath      string
+	bootWimPath         string
+	bootWimOutPath      string
+	skipBootRegTweaks   bool
+	skipBootLocaleTrim  bool
+	skipBootFileCleanup bool
 	// The three groups below are the 2026-08-19 additions most likely to
 	// break a real install or first boot, each isolated behind its own flag
 	// so a failure can be bisected by flipping flags rather than by editing
@@ -171,6 +172,7 @@ func main() {
 	flag.StringVar(&stages.bootWimOutPath, "boot-wim-out", "", "path to write the shrunk boot.wim (required if -boot-wim is set)")
 	flag.BoolVar(&stages.skipBootRegTweaks, "skip-boot-regtweaks", false, "skip the requirement-bypass/BitLocker registry tweaks applied to boot.wim's setup image")
 	flag.BoolVar(&stages.skipBootLocaleTrim, "skip-boot-locale-trim", false, "skip removing non-en-US locale directories and their owning WinSxS packages from boot.wim's setup image")
+	flag.BoolVar(&stages.skipBootFileCleanup, "skip-boot-filecleanup", false, "skip the font/speech/enterprise-storage-driver trim applied to boot.wim's setup image")
 	flag.BoolVar(&stages.keepNICDrivers, "keep-nic-drivers", false, "keep the 67 vendor network adapter driver families (242 MB) -- required for an image that must bring up networking on arbitrary physical hardware")
 	flag.BoolVar(&stages.keepWebEngines, "keep-web-engines", false, "keep mshtml.dll and edgehtml.dll (89 MB) -- the legacy Trident/EdgeHTML rendering engines")
 	flag.BoolVar(&stages.keepDefenderSearch, "keep-defender-search", false, "keep the Defender and Search servicing packages, whose removal patterns were dead on 25H2 until they were revived and so have never been covered by a passing install test")
@@ -220,7 +222,7 @@ func main() {
 			log.Fatal("-boot-wim-out is required when -boot-wim is given")
 		}
 		fmt.Println("--- Shrinking boot.wim to just the setup image ---")
-		if err := shrinkBootWim(stages.bootWimPath, stages.bootWimOutPath, stages.skipBootRegTweaks, stages.skipBootLocaleTrim, stages.lzx); err != nil {
+		if err := shrinkBootWim(stages.bootWimPath, stages.bootWimOutPath, stages.skipBootRegTweaks, stages.skipBootLocaleTrim, stages.skipBootFileCleanup, stages.lzx); err != nil {
 			log.Fatalf("shrink boot.wim: %v", err)
 		}
 		fmt.Printf("Wrote shrunk boot.wim to %s\n", stages.bootWimOutPath)

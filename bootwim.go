@@ -37,7 +37,7 @@ import (
 // 25H2 boot.wim, see TODO.md). Both are genuine wins once a re-encode is
 // already happening for another reason; neither is worth forcing a
 // re-encode on its own merits alone.
-func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim bool, lzxOpts lzx.Options) error {
+func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim, skipFileCleanup bool, lzxOpts lzx.Options) error {
 	f, err := os.Open(bootWimPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", bootWimPath, err)
@@ -134,6 +134,12 @@ func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim bo
 	} else {
 		trimmed := trimBootWimNonEnUSLocaleContent(meta, bt2)
 		fmt.Printf("Trimmed %d non-en-US locale/WinSxS-package directories from boot.wim setup image\n", trimmed)
+	}
+
+	if skipFileCleanup {
+		fmt.Println("--- Skipping boot.wim file cleanup (-skip-boot-filecleanup) ---")
+	} else if err := trimBootWimFiles(meta.Root, bt2); err != nil {
+		return fmt.Errorf("boot.wim file cleanup: %w", err)
 	}
 
 	rebuiltBT, err := wim.RebuildBlobTable([]*wim.ImageMetadata{meta}, bt2)
@@ -310,6 +316,78 @@ func applyBootWimRegistryTweaks(hs *registry.HiveSet) error {
 
 	fmt.Println("Disabling BitLocker device encryption (on the boot.wim setup image)...")
 	dw(ccs.FindOrCreatePath(`Control\BitLocker`), "PreventDeviceEncryption", 1)
+
+	return nil
+}
+
+// bootWimEnterpriseStoragePatterns are the enterprise Fibre Channel / FCoE /
+// SAS HBA and server-NIC drivers WinPE carries under System32\drivers so
+// Setup can install onto SAN and enterprise-array storage. Measured on a real
+// 25H2 build 26200 setup image: 23.8 MB, the second largest trimmable block
+// in the whole boot image.
+//
+// Every generic and consumer storage path is deliberately untouched --
+// storport, storahci, stornvme, the SATA/IDE/NVMe/USB stacks, ntfs, refs --
+// because those are what Setup actually needs to see an ordinary disk. This
+// list only names controllers found in servers and storage arrays: Broadcom/
+// Emulex (evbd*, qevbda, bxfcoe, bxois), Brocade FC (bfad*), Chelsio
+// (cht4vx64), QLogic FC (ql2300i, qlfcoei, ql40xx2i), Adaptec/microsemi SAS
+// (adp80xx, arcsas, smartsq), LSI/MegaRAID (megasas, lsi_*, mpi3drvi), Dell
+// PERC (percsas), HP (hpsamd), and assorted legacy RAID.
+//
+// The tradeoff is explicit: an image with these removed cannot install onto a
+// Fibre Channel LUN or a hardware RAID controller that needs its own driver.
+// For a VM or ordinary-SATA/NVMe target it costs nothing.
+var bootWimEnterpriseStoragePatterns = []string{
+	"evbda.sys", "evbd0a.sys", "qevbda.sys", "bxfcoe.sys", "bxois.sys",
+	"bfadi.sys", "bfadfcoei.sys", "cht4vx64.sys",
+	"ql2300i.sys", "qlfcoei.sys", "ql40xx2i.sys",
+	"adp80xx.sys", "arcsas.sys", "smartsq.sys",
+	"megasas*.sys", "lsi_*.sys", "mpi3drvi.sys", "percsas*.sys", "hpsamd.sys",
+	"nvraid.sys", "stexstor.sys", "vsmraid.sys", "iteraid.sys", "nfrd960.sys",
+	"iirsp.sys", "ulsata*.sys", "3ware.sys", "arc.sys", "arcsas.sys",
+}
+
+// trimBootWimFiles applies the same kind of per-file/per-directory cleanup to
+// boot.wim's setup image that filecleanup.go applies to install.wim. The
+// scope is deliberately much narrower: of the setup image's 1.338 GB, only
+// about 80 MB is genuinely removable. The rest -- ntoskrnl, the core driver
+// set, WMI, ICU, the servicing stack, and the imageres/shell32 resources
+// Setup's own UI draws from -- is load-bearing, so boot.wim stays large no
+// matter how much is cut.
+func trimBootWimFiles(root *wim.DirEntry, bt *wim.BlobTable) error {
+	fmt.Println("Trimming boot.wim setup image files...")
+
+	// CJK boot fonts (25.1 MB), same rationale as install.wim: the boot
+	// manager has no use for Chinese/Japanese/Korean glyphs in an image
+	// whose every CJK input path has been removed.
+	for _, dir := range []string{`Windows\Boot\Fonts`, `Windows\Boot\Fonts_EX`} {
+		if err := removeMatchingChildren(root, bt, dir, bootFontRemovePatterns, "boot.wim boot fonts"); err != nil {
+			return err
+		}
+	}
+
+	// Non-essential UI fonts (15.9 MB): emoji, historic scripts, Segoe
+	// Script/Print. Setup renders in Segoe UI, which stays.
+	if err := removeMatchingChildren(root, bt, `Windows\Fonts`,
+		[]string{"seguiemj.ttf", "seguihis.ttf", "segoesc*", "segoepr*"}, "boot.wim fonts"); err != nil {
+		return err
+	}
+
+	// Speech engines (15.5 MB). Setup has no speech UI; Narrator in WinPE
+	// uses its own path and is unaffected by the engine data.
+	for _, path := range []string{`Windows\Speech\Engines`, `Windows\Speech_OneCore\Engines`} {
+		if err := removeIfExists(root, bt, path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+
+	// Enterprise HBA / server NIC drivers (23.8 MB) -- see the pattern
+	// list's own comment for exactly what is and is not touched.
+	if err := removeMatchingChildren(root, bt, `Windows\System32\drivers`,
+		bootWimEnterpriseStoragePatterns, "boot.wim enterprise storage drivers"); err != nil {
+		return err
+	}
 
 	return nil
 }
