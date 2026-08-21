@@ -676,6 +676,31 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 			return fmt.Errorf("remove essential AI component: %w", err)
 		}
 	}
+	if stages.removeAIFoundation {
+		// The Windows AI Foundation / Copilot Runtime: the on-device
+		// generative-AI stack (Phi Silica, image generation, semantic search,
+		// content moderation) hosted by the "vNext" app runtime, plus the
+		// AugLoop text service and the System32 ML inference DLLs it uses.
+		// Distinct from WindowsAppRuntime.CBS (no "vNext"), which is the shell
+		// runtime and is NOT touched. CoreAI is kept (gate it with -remove-ai),
+		// so this measures whether OOBE/shell survive with CoreAI present but
+		// the Foundation gone -- see the boot test in TODO.md.
+		fmt.Println("Removing Windows AI Foundation (-remove-ai-foundation; vNext runtime, AugLoop, ML DLLs)...")
+		aiFoundation := []string{
+			winDir + `\SystemApps\Microsoft.WindowsAppRuntime.vNext.CBS_8wekyb3d8bbwe`,
+			winDir + `\SystemApps\Microsoft.Windows.AugLoop.CBS_8wekyb3d8bbwe`,
+			winDir + `\System32\directml.dll`,
+			winDir + `\System32\onnxruntime.dll`,
+			winDir + `\System32\Windows.AI.MachineLearning.dll`,
+			winDir + `\System32\Windows.AI.MachineLearning.Preview.dll`,
+			winDir + `\System32\SmartActionPlatform.dll`,
+		}
+		for _, path := range aiFoundation {
+			if err := removeIfExists(root, bt, path); err != nil {
+				return fmt.Errorf("remove AI foundation component %s: %w", path, err)
+			}
+		}
+	}
 
 	fmt.Println("Removing Edge (Program Files (x86)\\Microsoft\\Edge*)...")
 	if err := removeMatchingChildren(root, bt, edgeProgramFiles, []string{"Edge*"}, "edge"); err != nil {

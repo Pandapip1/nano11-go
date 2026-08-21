@@ -95,6 +95,11 @@ type stageFlags struct {
 	// want, unlike the telemetry/consumer bloat removed by default. The
 	// runtime frameworks they depend on are kept.
 	removeStoreApps bool
+	// removeAIFoundation removes the Windows AI Foundation / Copilot Runtime
+	// (the vNext app-runtime SystemApp hosting the on-device generative-AI
+	// stack, AugLoop, and the System32 ML inference DLLs). Opt-in; OOBE/shell-
+	// risk class (kept CoreAI may call into it), so it needs a boot test.
+	removeAIFoundation bool
 	// removeUWPFrameworks additionally removes the UWP runtime frameworks
 	// (WindowsAppRuntime, VCLibs, UI.Xaml, NET.Native). Implies
 	// removeStoreApps (removing frameworks while apps still need them would
@@ -208,6 +213,7 @@ func main() {
 	flag.BoolVar(&stages.removeAI, "remove-ai", false, "also remove the essential CoreAI SystemApp (~19 MB) -- BREAKS OOBE (CoreAI is OOBE-integrated in 25H2, bisected 2026-08-20), so off by default; the DirectML resources + WU ML models are already removed by default as non-essential; only for images that never run OOBE")
 	flag.BoolVar(&stages.removeStoreApps, "remove-store-apps", false, "also remove the Microsoft Store and the remaining Store-distributed UWP apps that survive the default pass (Calculator, Terminal, App Installer/winget, Phone Link CrossDevice, MPEG2/WebMedia extensions), ~83 MB; the UWP runtime frameworks they depend on are kept")
 	flag.BoolVar(&stages.removeUWPFrameworks, "remove-uwp-frameworks", false, "also remove the UWP runtime frameworks (WindowsAppRuntime, VCLibs, UI.Xaml, NET.Native), ~58 MB; implies -remove-store-apps. Higher risk -- the desktop shell may depend on these")
+	flag.BoolVar(&stages.removeAIFoundation, "remove-ai-foundation", false, "remove the Windows AI Foundation / Copilot Runtime: the vNext app-runtime SystemApp (on-device generative AI, ~40 MB), AugLoop, and the System32 ML inference DLLs (directml, onnxruntime, WinML, SmartActionPlatform), ~47 MB. OOBE/shell-risk class -- CoreAI is kept and may call into it")
 	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
 	// keyed on one flag being non-empty, and it runs last: it consumes what
 	// the install.wim and boot.wim stages above produced.

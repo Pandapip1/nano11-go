@@ -389,3 +389,29 @@ a WinUI/WindowsAppRuntime component) opened and rendered correctly.
 Proofs: shots_fw/PROOF_frameworks_removed_desktop.png,
 shots_fw/PROOF_frameworks_removed_startmenu.png. install.wim 2.20 GB (was 2.25
 with store apps removed, 2.33 default).
+
+---
+
+## 2026-08-21 -- Remove the Windows AI Foundation (-remove-ai-foundation)
+
+Investigation of the AI/ML still in the default image (beyond CoreAI, which is
+gated by -remove-ai) found the on-device AI stack:
+  - WindowsAppRuntime.vNext.CBS SystemApp (~40 MB): the Windows AI Foundation /
+    Copilot Runtime -- DirectML, ONNX runtime, and the Windows.AI.* generative/
+    imaging/text/machine-learning/semantic-search/content-safety APIs.
+  - System32 ML DLLs (~6 MB): directml.dll, onnxruntime.dll,
+    Windows.AI.MachineLearning(.Preview).dll, SmartActionPlatform.dll.
+  - AugLoop.CBS (~1 MB): text augmentation-loop AI.
+Kept: WindowsAppRuntime.CBS (no "vNext") is the SHELL runtime, not AI -- not
+touched. SKB\LanguageModels (typing prediction, ~3 MB) left alone for now.
+
+New opt-in flag -remove-ai-foundation removes the ~47 MB set (filecleanup.go).
+The risk was that the kept, OOBE-integrated CoreAI calls into the Foundation.
+
+Validated 2026-08-21 in QEMU/OVMF (TPM 2.0 + Secure Boot): a full install with
+-remove-ai-foundation (CoreAI kept) installed, completed OOBE (region/keyboard,
+no "Why did my PC restart?" recovery crash), autologged into the desktop, and
+the Start menu + taskbar rendered. So CoreAI's OOBE does NOT hard-depend on the
+Foundation, and the shell doesn't either. Proofs:
+shots_ai/PROOF_aifoundation_removed_desktop.png, ..._startmenu.png.
+install.wim 2.28 GB (was 2.33 default).
