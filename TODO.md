@@ -415,3 +415,23 @@ the Start menu + taskbar rendered. So CoreAI's OOBE does NOT hard-depend on the
 Foundation, and the shell doesn't either. Proofs:
 shots_ai/PROOF_aifoundation_removed_desktop.png, ..._startmenu.png.
 install.wim 2.28 GB (was 2.33 default).
+
+---
+
+## 2026-08-21 -- Remove all remaining IME/input-method payload (-remove-ime)
+
+Beyond the default CJK cut (System32\InputMethod\{CHS,CHT,JPN,KOR} and
+System32\IME\{IMEJP,IMETC,IMEKR}), ~21 MB of input-method payload remained:
+the separate Windows\IME tree, the 32-bit SysWOW64\IME mirror, the
+System32\IME\SHARED broker/API (previously left as "insurance"), the
+InputMethod\SHARED CJK code (+ SysWOW64 mirror), and the SwiftKey
+typing-prediction models under Windows\SKB. New opt-in flag -remove-ime clears
+all of it (filecleanup.go).
+
+The risk was that removing the IME broker/API breaks basic text input.
+Validated 2026-08-21 in QEMU/OVMF (TPM 2.0 + Secure Boot): a full install with
+-remove-ime installed, completed OOBE, reached the desktop, and TYPING WORKS --
+typed "notepad" into the Start search box and every character registered
+(proof: shots_ime/PROOF_ime_removed_typing_ok.png). Basic keyboard input uses
+the kbd*.dll layouts, which are independent of the IME framework. CJK input and
+typing suggestions are the only things lost. install.wim 2.31 GB.

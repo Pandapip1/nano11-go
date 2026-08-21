@@ -100,6 +100,11 @@ type stageFlags struct {
 	// stack, AugLoop, and the System32 ML inference DLLs). Opt-in; OOBE/shell-
 	// risk class (kept CoreAI may call into it), so it needs a boot test.
 	removeAIFoundation bool
+	// removeIME clears all remaining input-method payload (CJK IME editors and
+	// framework, plus SwiftKey typing prediction) for a Latin-only image.
+	// Opt-in: basic keyboard input is unaffected, but it removes the IME
+	// broker/API left as insurance by default, so it warrants a boot test.
+	removeIME bool
 	// removeUWPFrameworks additionally removes the UWP runtime frameworks
 	// (WindowsAppRuntime, VCLibs, UI.Xaml, NET.Native). Implies
 	// removeStoreApps (removing frameworks while apps still need them would
@@ -214,6 +219,7 @@ func main() {
 	flag.BoolVar(&stages.removeStoreApps, "remove-store-apps", false, "also remove the Microsoft Store and the remaining Store-distributed UWP apps that survive the default pass (Calculator, Terminal, App Installer/winget, Phone Link CrossDevice, MPEG2/WebMedia extensions), ~83 MB; the UWP runtime frameworks they depend on are kept")
 	flag.BoolVar(&stages.removeUWPFrameworks, "remove-uwp-frameworks", false, "also remove the UWP runtime frameworks (WindowsAppRuntime, VCLibs, UI.Xaml, NET.Native), ~58 MB; implies -remove-store-apps. Higher risk -- the desktop shell may depend on these")
 	flag.BoolVar(&stages.removeAIFoundation, "remove-ai-foundation", false, "remove the Windows AI Foundation / Copilot Runtime: the vNext app-runtime SystemApp (on-device generative AI, ~40 MB), AugLoop, and the System32 ML inference DLLs (directml, onnxruntime, WinML, SmartActionPlatform), ~47 MB. OOBE/shell-risk class -- CoreAI is kept and may call into it")
+	flag.BoolVar(&stages.removeIME, "remove-ime", false, "remove all remaining input-method payload for a Latin-only image (~21 MB): the CJK IME editors (Windows\\IME, SysWOW64\\IME), the IME broker/API (System32\\IME\\SHARED) and InputMethod shared code, and the SwiftKey typing-prediction models (Windows\\SKB). Basic keyboard input is unaffected; CJK input and typing suggestions are lost")
 	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
 	// keyed on one flag being non-empty, and it runs last: it consumes what
 	// the install.wim and boot.wim stages above produced.

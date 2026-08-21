@@ -612,6 +612,25 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	for _, ime := range imeDirsToRemove {
 		mustRemove = append(mustRemove, winDir+`\System32\IME\`+ime)
 	}
+	if stages.removeIME {
+		// -remove-ime clears ALL remaining input-method payload (~21 MB) for
+		// an image that only ever types Latin script. Basic keyboard input
+		// uses the kbd*.dll layouts (untouched); everything here is the CJK
+		// IME editors and their framework: the separate Windows\IME tree, the
+		// 32-bit SysWOW64\IME mirror, the System32\IME\SHARED broker/API left
+		// as "insurance" above, the CJK InputMethod shared code plus its
+		// SysWOW64 mirror, and the SwiftKey typing-prediction language models
+		// under Windows\SKB. Validated by a boot test that types into the OOBE
+		// and login fields -- see TODO.md.
+		mustRemove = append(mustRemove,
+			winDir+`\IME`,
+			winDir+`\SysWOW64\IME`,
+			winDir+`\System32\IME\SHARED`,
+			winDir+`\System32\InputMethod\SHARED`,
+			winDir+`\SysWOW64\InputMethod`,
+			winDir+`\SKB`,
+		)
+	}
 	for _, path := range mustRemove {
 		if err := removeIfExists(root, bt, path); err != nil {
 			return fmt.Errorf("remove %s: %w", path, err)
