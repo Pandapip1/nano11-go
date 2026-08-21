@@ -280,3 +280,44 @@ for anyone who set them: everything still comes out).
 Default ISO now 3,193,608,192 bytes (nano11go_split.iso), ~27 MB below the
 AI-kept build, from the non-essential removal -- on top of the winre stub's
 606 MB. install.wim 2.2 GB.
+
+---
+
+## 2026-08-20 -- Optional GRUB boot menu (-grub-efi)
+
+Added an opt-in GRUB front-end to the authored ISO: -grub-efi <path-to-EFI>
+swaps the UEFI El Torito boot image from Windows' efisys_noprompt.bin to a FAT
+image holding the given GRUB application at \EFI\BOOT\BOOTX64.EFI. The menu
+autoprobes attached devices for an installed OS (prefers it over the installer,
+excludes the disc), 5 s countdown with Windows Setup as fallback default, boots
+Setup via wimboot, plus memtest and a UEFI reboot-into-firmware entry.
+
+Must be a1ive's GRUB fork -- verified from source that STOCK GRUB cannot launch
+the Windows installer from optical media by ANY route:
+  - chainload bootmgr/cdboot from the disc: LoadImage+StartImage succeed, then
+    bootmgr exits (needs the El Torito/cdboot environment).
+  - chainload upstream wimboot: runs but OpenProtocol(DeviceHandle,
+    SimpleFileSystem) = EFI_UNSUPPORTED; GRUB hands it a BlockIO handle with no
+    SFS. True for iso9660 AND UDF. wimboot-EFI reads files only via SFS
+    (src/efimain.c). Stock GRUB only works from a real FAT volume (USB/disk).
+a1ive's `map` module `wimboot` reads boot.wim through GRUB's own file layer, so
+it works from optical. See contrib/grub/ and the grub-wimboot-optical-boot
+memory note for the full investigation and build recipe.
+
+Implementation:
+  - fatimg.go: a minimal pure-Go FAT16 writer (one file, \EFI\BOOT\BOOTX64.EFI,
+    all 8.3 names -- no LFN). Keeps the no-external-tools property; no mtools.
+    Round-trip verified against mdir/mtype.
+  - isoimage.go: buildISO stages the FAT image at boot/grub/efi.img and points
+    the UEFI boot entry at it; BIOS entry stays Windows-native etfsboot.com.
+  - contrib/grub/: grub.cfg (the menu), build-grub.sh (builds a1ive GRUB and
+    grub-mkstandalone's the EFI -- binary NOT vendored), README.md.
+
+Caveats: UEFI only, Secure Boot must be OFF (unsigned GRUB). BIOS boot is still
+Windows-native (an i386-pc GRUB build would be needed to front BIOS too).
+
+Validated end-to-end 2026-08-20 in QEMU/OVMF (SB off): the ISO authored by the
+nano11go binary itself (Go-built FAT image + gowim UDF writer) auto-booted
+through the GRUB menu into Windows 11 Setup (language page) from a CD-ROM, no
+keypress. Earlier hand-built probe reached the edition/requirements stage,
+confirming install.wim is read via CDFS.

@@ -94,7 +94,13 @@ type isoFlags struct {
 	installWim       string // install.wim to place at sources/install.wim
 	bootWim          string // boot.wim to place at sources/boot.wim
 	skipAutounattend bool   // do not place autounattend.xml at the ISO root
+	grubEFI          string // path to an a1ive GRUB EFI application; if set, the ISO's UEFI boot entry loads GRUB (menu + wimboot) instead of Windows' boot manager (see grubBootImage)
 }
+
+// grubBootImagePath is where buildISO stages the GRUB UEFI El Torito boot
+// image inside the tree when -grub-efi is used. It lives under boot/ (which is
+// in isoRootKeepList) so cleanISORoot leaves it alone.
+const grubBootImagePath = "boot/grub/efi.img"
 
 // buildISO prepares the extracted ISO tree in place and writes a bootable
 // image from it.
@@ -145,6 +151,36 @@ func buildISO(f isoFlags) error {
 		return err
 	}
 
+	// UEFI El Torito boot image: Windows' own efisys by default, or a GRUB
+	// FAT image when -grub-efi is given. The GRUB image is a tiny FAT
+	// filesystem holding \EFI\BOOT\BOOTX64.EFI == the supplied GRUB
+	// application (built in Go, see fatimg.go). Stock GRUB cannot launch the
+	// Windows installer from optical media; the supplied binary must be
+	// a1ive's GRUB fork (its wimboot command reads boot.wim through GRUB's own
+	// filesystem layer), and Secure Boot must be off. The BIOS entry is left
+	// as Windows' native etfsboot.com -- an i386-pc GRUB image would be needed
+	// to put GRUB in front of BIOS boot too. See contrib/grub/.
+	uefiImg := uefiBootImage
+	if f.grubEFI != "" {
+		grub, err := os.ReadFile(f.grubEFI)
+		if err != nil {
+			return fmt.Errorf("read -grub-efi %s: %w", f.grubEFI, err)
+		}
+		fatImg, err := buildGrubFATImage(grub)
+		if err != nil {
+			return fmt.Errorf("build GRUB boot image: %w", err)
+		}
+		dst := filepath.Join(f.dir, filepath.FromSlash(grubBootImagePath))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, fatImg, 0o644); err != nil {
+			return fmt.Errorf("write GRUB boot image: %w", err)
+		}
+		fmt.Printf("GRUB UEFI boot image staged at %s (%d bytes) from %s\n", grubBootImagePath, len(fatImg), f.grubEFI)
+		uefiImg = grubBootImagePath
+	}
+
 	volID := f.volID
 	if volID == "" {
 		volID = "Nano11Go"
@@ -178,7 +214,7 @@ func buildISO(f isoFlags) error {
 			// LoadSectors 0 means "derive from the file's size", which is
 			// what genisoimage does without -boot-load-size: 2880 for the
 			// 1 474 560-byte efisys_noprompt.bin.
-			ImagePath: uefiBootImage,
+			ImagePath: uefiImg,
 			Platform:  iso.BootPlatformUEFI,
 		}},
 		// genisoimage names the catalog boot.catalog at the root, which is
