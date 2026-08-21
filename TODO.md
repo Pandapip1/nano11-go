@@ -321,3 +321,26 @@ nano11go binary itself (Go-built FAT image + gowim UDF writer) auto-booted
 through the GRUB menu into Windows 11 Setup (language page) from a CD-ROM, no
 keypress. Earlier hand-built probe reached the edition/requirements stage,
 confirming install.wim is read via CDFS.
+
+---
+
+## 2026-08-21 -- Low-risk media-extras removal (default; -keep-iso-extras)
+
+Added removeISOExtras (isobloat.go), run by default during ISO authoring: it
+deletes files on the media (NOT inside install.wim) whose removal cannot affect
+install, boot, or OOBE. Gated behind -keep-iso-extras for bisectability, like
+-keep-defender-search. ~117 MB off the default ISO.
+
+  - sources\sxs netfx3-ondemand cab (~71 MB): offline .NET 3.5 payload;
+    enabling .NET 3.5 later just uses Windows Update instead.
+  - sources\*\credits.htm + credits.txt (~18 MB): Setup "Legal" link text.
+  - CJK boot fonts (~27 MB across boot\fonts + efi\microsoft\boot\fonts):
+    chs/cht/jpn/kor + the msjh/msyh/malgun/meiryo UI faces. Latin boot fonts
+    (segoe_slboot, segoen_slboot, segmono_boot, wgl4_boot) are KEPT -- they
+    render the en-US boot UI. memtest.efi is kept (the -grub-efi menu uses it).
+
+Default ISO now 3,076,392,960 bytes (was 3,193,608,192). install.wim and
+boot.wim are untouched -- all 117 MB came off the ISO scaffolding.
+
+Validated 2026-08-21 in QEMU/OVMF: the lean default ISO boots natively into
+Windows 11 Setup (language page), confirming boot-font rendering is intact.

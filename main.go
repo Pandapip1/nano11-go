@@ -203,6 +203,7 @@ func main() {
 	flag.StringVar(&isoOpts.installWim, "iso-install-wim", "", "install.wim to place at sources/install.wim in -iso-dir (default: whatever -out wrote; empty and no -out leaves the tree's existing copy alone)")
 	flag.StringVar(&isoOpts.bootWim, "iso-boot-wim", "", "boot.wim to place at sources/boot.wim in -iso-dir (default: whatever -boot-wim-out wrote; empty and no -boot-wim-out leaves the tree's existing copy alone)")
 	flag.BoolVar(&isoOpts.skipAutounattend, "skip-iso-autounattend", false, "do not place nano11's embedded autounattend.xml at the authored ISO's root")
+	flag.BoolVar(&isoOpts.keepExtras, "keep-iso-extras", false, "keep the low-risk media extras that are removed by default: the offline .NET 3.5 cab (~71 MB), Setup credits text (~18 MB), and CJK boot fonts (~27 MB) -- none of which affect install, boot, or OOBE")
 	flag.StringVar(&isoOpts.grubEFI, "grub-efi", "", "path to an a1ive GRUB EFI application (see contrib/grub/); if set, the authored ISO's UEFI boot entry loads GRUB instead of Windows' boot manager, giving a boot menu that autoprobes installed OSes and boots Windows Setup via wimboot. Optical-bootable and pure UEFI. Requires Secure Boot off; the GRUB binary is not vendored -- build it with contrib/grub/build-grub.sh")
 	// Default "fast", not gowim's own ratio-first default: this tool's
 	// workload is re-encoding multi-gigabyte images end to end (the

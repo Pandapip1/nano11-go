@@ -94,6 +94,7 @@ type isoFlags struct {
 	installWim       string // install.wim to place at sources/install.wim
 	bootWim          string // boot.wim to place at sources/boot.wim
 	skipAutounattend bool   // do not place autounattend.xml at the ISO root
+	keepExtras       bool   // do not remove the low-risk media extras (netfx3 cab, credits, CJK boot fonts); see removeISOExtras
 	grubEFI          string // path to an a1ive GRUB EFI application; if set, the ISO's UEFI boot entry loads GRUB (menu + wimboot) instead of Windows' boot manager (see grubBootImage)
 }
 
@@ -149,6 +150,12 @@ func buildISO(f isoFlags) error {
 
 	if err := cleanISORoot(f.dir); err != nil {
 		return err
+	}
+
+	if !f.keepExtras {
+		if err := removeISOExtras(f.dir); err != nil {
+			return fmt.Errorf("remove ISO extras: %w", err)
+		}
 	}
 
 	// UEFI El Torito boot image: Windows' own efisys by default, or a GRUB
