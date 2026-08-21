@@ -367,3 +367,25 @@ region?" page (shots_store/PROOF_store_removed_oobe_ok.png) -- install and OOBE
 intact. install.wim 2.25 GB (was 2.33); ISO 3.00 GB.
 
 Next: attempt removing the frameworks too (higher risk; shell may depend).
+
+---
+
+## 2026-08-21 -- Remove UWP frameworks too (-remove-uwp-frameworks)
+
+Higher-risk opt-in flag that extends -remove-store-apps to the UWP runtime
+frameworks: WindowsAppRuntime (1.5 + 1.6), VCLibs (140.00 + UWPDesktop),
+UI.Xaml.2.8, NET.Native (Framework + Runtime) -- frameworkAppxKeywords in
+appx.go. Implies -remove-store-apps (removing frameworks while apps still need
+them would break the apps). ~58 MB more.
+
+The risk was that the desktop shell links these; it does NOT -- the Win11 shell
+carries its own framework copies under Windows\SystemApps (the *.CBS variants),
+so the WindowsApps provisioned copies are only for user apps.
+
+Validated 2026-08-21 in QEMU/OVMF (TPM 2.0 + Secure Boot): a full install of
+the -remove-uwp-frameworks image installed, completed OOBE, autologged into the
+desktop (Explorer + Recycle Bin), and the Start menu (StartMenuExperienceHost,
+a WinUI/WindowsAppRuntime component) opened and rendered correctly.
+Proofs: shots_fw/PROOF_frameworks_removed_desktop.png,
+shots_fw/PROOF_frameworks_removed_startmenu.png. install.wim 2.20 GB (was 2.25
+with store apps removed, 2.33 default).

@@ -54,11 +54,22 @@ var storeAppxKeywords = []string{
 	"mpeg2videoextension", "webmediaextensions",
 }
 
+// frameworkAppxKeywords are the UWP runtime *frameworks* the removed apps (and
+// potentially the shell) depend on. Removing them only makes sense once the
+// apps that need them are gone, so -remove-uwp-frameworks implies
+// -remove-store-apps. This is the higher-risk tier: the Win11 shell's own
+// framework copies live under Windows\SystemApps (the *.CBS variants), so in
+// principle the WindowsApps copies here are only for user apps -- but that is
+// exactly what the boot-to-desktop test has to confirm.
+var frameworkAppxKeywords = []string{
+	"windowsappruntime", "vclibs", "ui.xaml", "net.native",
+}
+
 // provisioningPath is the offline source of truth for provisioned AppX
 // packages (see the sibling appx package's own doc comments).
 const provisioningPath = `ProgramData\Microsoft\Windows\AppxProvisioning.xml`
 
-func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, software *registry.Hive, newBlobs map[wim.Hash][]byte, removeStoreApps bool) error {
+func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, software *registry.Hive, newBlobs map[wim.Hash][]byte, removeStoreApps, removeUWPFrameworks bool) error {
 	data, err := r.ReadFile(root, bt, provisioningPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", provisioningPath, err)
@@ -68,9 +79,12 @@ func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, softw
 		return err
 	}
 
-	keywords := bloatAppxKeywords
-	if removeStoreApps {
-		keywords = append(append([]string{}, bloatAppxKeywords...), storeAppxKeywords...)
+	keywords := append([]string{}, bloatAppxKeywords...)
+	if removeStoreApps || removeUWPFrameworks {
+		keywords = append(keywords, storeAppxKeywords...)
+	}
+	if removeUWPFrameworks {
+		keywords = append(keywords, frameworkAppxKeywords...)
 	}
 
 	applications := software.Hive.Root.FindOrCreatePath(appx.ApplicationsPath)
