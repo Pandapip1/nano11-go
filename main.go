@@ -88,6 +88,13 @@ type stageFlags struct {
 	keepNICDrivers     bool
 	removeWebEngines   bool
 	keepDefenderSearch bool
+	// removeStoreApps additionally removes the Microsoft Store and the
+	// remaining Store-distributed UWP apps (Calculator, Terminal, App
+	// Installer/winget, Phone Link CrossDevice, MPEG2/WebMedia extensions) --
+	// see storeAppxKeywords. Opt-in, off by default: these are apps a user may
+	// want, unlike the telemetry/consumer bloat removed by default. The
+	// runtime frameworks they depend on are kept.
+	removeStoreApps bool
 	// removeAI removes the ESSENTIAL AI component, the CoreAI SystemApp, on
 	// top of the non-essential AI resources/data that file cleanup removes by
 	// default. It is OFF by default and opt-in, because removing CoreAI BREAKS
@@ -193,6 +200,7 @@ func main() {
 	flag.BoolVar(&stages.removeWebEngines, "remove-web-engines", false, "also remove the essential web engine edgehtml.dll (~46 MB) -- BREAKS OOBE (CloudExperienceHost renders through EdgeHTML), so off by default; mshtml.dll is already removed by default as non-essential; only for images that never run OOBE")
 	flag.BoolVar(&stages.keepDefenderSearch, "keep-defender-search", false, "keep the Defender and Search servicing packages, whose removal patterns were dead on 25H2 until they were revived and so have never been covered by a passing install test")
 	flag.BoolVar(&stages.removeAI, "remove-ai", false, "also remove the essential CoreAI SystemApp (~19 MB) -- BREAKS OOBE (CoreAI is OOBE-integrated in 25H2, bisected 2026-08-20), so off by default; the DirectML resources + WU ML models are already removed by default as non-essential; only for images that never run OOBE")
+	flag.BoolVar(&stages.removeStoreApps, "remove-store-apps", false, "also remove the Microsoft Store and the remaining Store-distributed UWP apps that survive the default pass (Calculator, Terminal, App Installer/winget, Phone Link CrossDevice, MPEG2/WebMedia extensions), ~83 MB; the UWP runtime frameworks they depend on are kept")
 	// ISO authoring (isoimage.go). Like -boot-wim, this is an opt-in stage
 	// keyed on one flag being non-empty, and it runs last: it consumes what
 	// the install.wim and boot.wim stages above produced.
@@ -394,7 +402,7 @@ func run(wimPath, outPath string, imageIndex int, stages stageFlags) error {
 		fmt.Println("--- Skipping AppX removal (-skip-appx) ---")
 	} else {
 		fmt.Println("--- Removing provisioned AppX packages (bloatware) ---")
-		if err := removeBloatAppx(r2, bt2, root, software, newBlobs); err != nil {
+		if err := removeBloatAppx(r2, bt2, root, software, newBlobs, stages.removeStoreApps); err != nil {
 			return fmt.Errorf("remove appx: %w", err)
 		}
 	}

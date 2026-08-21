@@ -344,3 +344,26 @@ boot.wim are untouched -- all 117 MB came off the ISO scaffolding.
 
 Validated 2026-08-21 in QEMU/OVMF: the lean default ISO boots natively into
 Windows 11 Setup (language page), confirming boot-font rendering is intact.
+
+---
+
+## 2026-08-21 -- Remove remaining Store UWP apps (-remove-store-apps)
+
+Opt-in flag (off by default, like -remove-web-engines/-remove-ai) that extends
+the provisioned-appx removal to the Store-distributed apps that survive the
+default pass: Microsoft Store, StorePurchaseApp, Calculator, Terminal, Desktop
+App Installer (winget), Phone Link CrossDevice, and the MPEG2/WebMedia codec
+extensions (storeAppxKeywords in appx.go). ~83 MB. The UWP runtime frameworks
+(WindowsAppRuntime, VCLibs, UI.Xaml, NET.Native) are intentionally kept -- the
+shell may link them.
+
+All eight were verified present as provisioned packages in image 6 (Pro) of a
+real 25H2 build 26200. Removed via the same appx.Remove path as the default
+bloat.
+
+Validated 2026-08-21 in QEMU/OVMF (TPM 2.0 + Secure Boot): a full install of
+the -remove-store-apps image reached the OOBE "Is this the right country or
+region?" page (shots_store/PROOF_store_removed_oobe_ok.png) -- install and OOBE
+intact. install.wim 2.25 GB (was 2.33); ISO 3.00 GB.
+
+Next: attempt removing the frameworks too (higher risk; shell may depend).

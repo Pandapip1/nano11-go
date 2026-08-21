@@ -39,11 +39,26 @@ var bloatAppxKeywords = []string{
 	"xbox", "webexperience", "screensketch",
 }
 
+// storeAppxKeywords are the remaining Store-distributed UWP *apps* that survive
+// the default bloat pass: the Microsoft Store itself and a handful of utilities
+// and media/codec extensions. They are removed only under -remove-store-apps
+// (stageFlags.removeStoreApps), not by default, because unlike the telemetry/
+// consumer bloat above these are apps a user may legitimately want (winget,
+// Terminal, Calculator). The runtime *frameworks* they and the shell depend on
+// (WindowsAppRuntime, VCLibs, UI.Xaml, NET.Native) are deliberately NOT here --
+// removing those is a separate, higher-risk step. All eight were verified
+// present as provisioned packages in a real 25H2 (build 26200) image.
+var storeAppxKeywords = []string{
+	"windowsstore", "storepurchaseapp", "desktopappinstaller",
+	"windowsterminal", "windowscalculator", "crossdevice",
+	"mpeg2videoextension", "webmediaextensions",
+}
+
 // provisioningPath is the offline source of truth for provisioned AppX
 // packages (see the sibling appx package's own doc comments).
 const provisioningPath = `ProgramData\Microsoft\Windows\AppxProvisioning.xml`
 
-func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, software *registry.Hive, newBlobs map[wim.Hash][]byte) error {
+func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, software *registry.Hive, newBlobs map[wim.Hash][]byte, removeStoreApps bool) error {
 	data, err := r.ReadFile(root, bt, provisioningPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", provisioningPath, err)
@@ -51,6 +66,11 @@ func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, softw
 	pl, err := appx.ParseProvisioning(data)
 	if err != nil {
 		return err
+	}
+
+	keywords := bloatAppxKeywords
+	if removeStoreApps {
+		keywords = append(append([]string{}, bloatAppxKeywords...), storeAppxKeywords...)
 	}
 
 	applications := software.Hive.Root.FindOrCreatePath(appx.ApplicationsPath)
@@ -62,7 +82,7 @@ func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, softw
 		if err != nil {
 			continue
 		}
-		if isBloatFamily(fam) {
+		if isBloatFamily(fam, keywords) {
 			families[fam] = true
 		}
 	}
@@ -89,9 +109,9 @@ func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, softw
 // name, no publisher suffix) -- checking the whole family name string
 // (which still contains the name as its prefix) is equivalent for
 // substring matching purposes and avoids re-deriving the bare name.
-func isBloatFamily(familyName string) bool {
+func isBloatFamily(familyName string, keywords []string) bool {
 	lower := strings.ToLower(familyName)
-	for _, kw := range bloatAppxKeywords {
+	for _, kw := range keywords {
 		if strings.Contains(lower, kw) {
 			return true
 		}

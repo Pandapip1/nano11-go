@@ -356,7 +356,7 @@ func measureTrial(t *testing.T, env *measureEnv, patterns []string, otherStages,
 			restore()
 			t.Fatal(err)
 		}
-		if err := removeBloatAppx(env.r, bt, root, hs.Hives[registry.HiveSoftware], newBlobs); err != nil {
+		if err := removeBloatAppx(env.r, bt, root, hs.Hives[registry.HiveSoftware], newBlobs, false); err != nil {
 			restore()
 			t.Fatal(err)
 		}
