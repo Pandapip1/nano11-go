@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/Pandapip1/gowim/appx"
@@ -101,7 +102,19 @@ func removeBloatAppx(r *wim.Reader, bt *wim.BlobTable, root *wim.DirEntry, softw
 		}
 	}
 
+	// Sorted rather than ranged directly over families: map iteration order
+	// is randomized per run, and appx.Remove appends to the provisioning
+	// list's EndOfLife section in call order, so an unsorted range here
+	// made the rebuilt AppxProvisioning.xml (and hence the whole image)
+	// non-reproducible across otherwise-identical runs -- same package set,
+	// different byte order, found while diffing two full-pipeline builds.
+	sortedFamilies := make([]string, 0, len(families))
 	for fam := range families {
+		sortedFamilies = append(sortedFamilies, fam)
+	}
+	sort.Strings(sortedFamilies)
+
+	for _, fam := range sortedFamilies {
 		if err := appx.Remove(pl, fam, true, applications, deprovisioned, root, bt); err != nil {
 			log.Printf("warning: appx.Remove(%s): %v", fam, err)
 			continue
