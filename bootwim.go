@@ -37,7 +37,7 @@ import (
 // 25H2 boot.wim, see TODO.md). Both are genuine wins once a re-encode is
 // already happening for another reason; neither is worth forcing a
 // re-encode on its own merits alone.
-func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim, skipFileCleanup bool, lzxOpts lzx.Options) error {
+func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim, skipFileCleanup, keepDrivers bool, lzxOpts lzx.Options) error {
 	f, err := os.Open(bootWimPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", bootWimPath, err)
@@ -138,7 +138,7 @@ func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim, s
 
 	if skipFileCleanup {
 		fmt.Println("--- Skipping boot.wim file cleanup (-skip-boot-filecleanup) ---")
-	} else if err := trimBootWimFiles(meta.Root, bt2); err != nil {
+	} else if err := trimBootWimFiles(meta.Root, bt2, keepDrivers); err != nil {
 		return fmt.Errorf("boot.wim file cleanup: %w", err)
 	}
 
@@ -355,7 +355,7 @@ var bootWimEnterpriseStoragePatterns = []string{
 // set, WMI, ICU, the servicing stack, and the imageres/shell32 resources
 // Setup's own UI draws from -- is load-bearing, so boot.wim stays large no
 // matter how much is cut.
-func trimBootWimFiles(root *wim.DirEntry, bt *wim.BlobTable) error {
+func trimBootWimFiles(root *wim.DirEntry, bt *wim.BlobTable, keepDrivers bool) error {
 	fmt.Println("Trimming boot.wim setup image files...")
 
 	// CJK boot fonts (25.1 MB), same rationale as install.wim: the boot
@@ -384,7 +384,9 @@ func trimBootWimFiles(root *wim.DirEntry, bt *wim.BlobTable) error {
 
 	// Enterprise HBA / server NIC drivers (23.8 MB) -- see the pattern
 	// list's own comment for exactly what is and is not touched.
-	if err := removeMatchingChildren(root, bt, `Windows\System32\drivers`,
+	if keepDrivers {
+		fmt.Println("Keeping boot.wim enterprise storage drivers (-keep-drivers)")
+	} else if err := removeMatchingChildren(root, bt, `Windows\System32\drivers`,
 		bootWimEnterpriseStoragePatterns, "boot.wim enterprise storage drivers"); err != nil {
 		return err
 	}

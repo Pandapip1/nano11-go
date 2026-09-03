@@ -88,6 +88,11 @@ type stageFlags struct {
 	keepNICDrivers     bool
 	removeWebEngines   bool
 	keepDefenderSearch bool
+	// keepDrivers keeps every DriverStore driver class the default pass
+	// removes (printers, modems, biometric, plus boot.wim's enterprise
+	// storage/HBA set) on top of the vendor NIC families -- implies
+	// keepNICDrivers, since "keep all drivers" would be a lie otherwise.
+	keepDrivers bool
 	// removeStoreApps additionally removes the Microsoft Store and the
 	// remaining Store-distributed UWP apps (Calculator, Terminal, App
 	// Installer/winget, Phone Link CrossDevice, MPEG2/WebMedia extensions) --
@@ -213,6 +218,7 @@ func main() {
 	flag.BoolVar(&stages.skipBootLocaleTrim, "skip-boot-locale-trim", false, "skip removing non-en-US locale directories and their owning WinSxS packages from boot.wim's setup image")
 	flag.BoolVar(&stages.skipBootFileCleanup, "skip-boot-filecleanup", false, "skip the font/speech/enterprise-storage-driver trim applied to boot.wim's setup image")
 	flag.BoolVar(&stages.keepNICDrivers, "keep-nic-drivers", false, "keep the 67 vendor network adapter driver families (242 MB) -- required for an image that must bring up networking on arbitrary physical hardware")
+	flag.BoolVar(&stages.keepDrivers, "keep-drivers", false, "keep every DriverStore driver class removed by default (printers, modems, biometric, etc.) and boot.wim's enterprise storage/HBA drivers, on top of vendor NIC families -- implies -keep-nic-drivers; for an image that must support arbitrary physical hardware")
 	flag.BoolVar(&stages.removeWebEngines, "remove-web-engines", false, "also remove the essential web engine edgehtml.dll (~46 MB) -- BREAKS OOBE (CloudExperienceHost renders through EdgeHTML), so off by default; mshtml.dll is already removed by default as non-essential; only for images that never run OOBE")
 	flag.BoolVar(&stages.keepDefenderSearch, "keep-defender-search", false, "keep the Defender and Search servicing packages, whose removal patterns were dead on 25H2 until they were revived and so have never been covered by a passing install test")
 	flag.BoolVar(&stages.removeAI, "remove-ai", false, "also remove the essential CoreAI SystemApp (~19 MB) -- BREAKS OOBE (CoreAI is OOBE-integrated in 25H2, bisected 2026-08-20), so off by default; the DirectML resources + WU ML models are already removed by default as non-essential; only for images that never run OOBE")
@@ -263,12 +269,16 @@ func main() {
 	flag.Parse()
 	fmt.Printf("LZX preset: %s\n", lzxPresetName)
 
+	if stages.keepDrivers {
+		stages.keepNICDrivers = true
+	}
+
 	if stages.bootWimPath != "" {
 		if stages.bootWimOutPath == "" {
 			log.Fatal("-boot-wim-out is required when -boot-wim is given")
 		}
 		fmt.Println("--- Shrinking boot.wim to just the setup image ---")
-		if err := shrinkBootWim(stages.bootWimPath, stages.bootWimOutPath, stages.skipBootRegTweaks, stages.skipBootLocaleTrim, stages.skipBootFileCleanup, stages.lzx); err != nil {
+		if err := shrinkBootWim(stages.bootWimPath, stages.bootWimOutPath, stages.skipBootRegTweaks, stages.skipBootLocaleTrim, stages.skipBootFileCleanup, stages.keepDrivers, stages.lzx); err != nil {
 			log.Fatalf("shrink boot.wim: %v", err)
 		}
 		fmt.Printf("Wrote shrunk boot.wim to %s\n", stages.bootWimOutPath)

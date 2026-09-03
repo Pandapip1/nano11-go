@@ -466,9 +466,13 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		return err
 	}
 
-	fmt.Println("Slimming the DriverStore...")
-	if err := removeMatchingChildren(root, bt, driverRepoDir, driverStoreRemovePatterns, "driverstore"); err != nil {
-		return err
+	if stages.keepDrivers {
+		fmt.Println("Keeping non-NIC DriverStore driver classes (-keep-drivers)")
+	} else {
+		fmt.Println("Slimming the DriverStore...")
+		if err := removeMatchingChildren(root, bt, driverRepoDir, driverStoreRemovePatterns, "driverstore"); err != nil {
+			return err
+		}
 	}
 
 	if stages.keepNICDrivers {
