@@ -6,3 +6,7 @@
 /iso_check.txt
 /scratch_listing.txt
 /scratch_usage.txt
+/contrib/grub/BOOTX64.EFI
+/contrib/grub/BOOT_HYBRID.img
+/contrib/grub/BIOS_ELTORITO_MENU.img
+/contrib/grub/BIOS_ELTORITO_SILENT.img

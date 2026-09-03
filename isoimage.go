@@ -67,13 +67,42 @@ import (
 // cdboot_noprompt.efi instead of cdboot.efi) -- used here so Setup boots
 // straight in, skipping the "Press any key to boot from CD or DVD..." prompt
 // and its 5-second timing window. There is no equivalent no-prompt variant of
-// the BIOS-mode boot sector boot/etfsboot.com, but that entry only matters for
-// legacy BIOS boot; real UEFI firmware (and this project's qemu/OVMF test VMs)
-// always takes the EFI entry.
+// the BIOS-mode boot sector boot/etfsboot.com; real UEFI firmware (and this
+// project's qemu/OVMF test VMs) always takes the EFI entry regardless.
 const (
 	biosBootImage = "boot/etfsboot.com"
 	uefiBootImage = "efi/microsoft/boot/efisys_noprompt.bin"
 )
+
+// biosBootEntry builds the BIOS El Torito BootEntry for img, which is either
+// biosBootImage (Windows' etfsboot.com) or a GRUB image at
+// grubBIOSEltoritoPath. Both want a boot information table, but for
+// different reasons: Windows' own etfsboot.com reads real executable code
+// around it; GRUB's cdboot.img (grub-core/boot/i386/pc/cdboot.S) reads its
+// own boot_info struct at the very same offset/layout (bi_pvd/bi_file/
+// bi_length/bi_csum, a 56-byte struct starting at offset 8 -- identical to
+// genisoimage's own struct genisoimage_boot_info, which is what
+// BootInfoTable produces) to find and size the rest of the image; without
+// it, bi_length reads zero and cdboot.img hangs printing "no boot info"
+// (verified: this is exactly what -grub-bios-eltorito without BootInfoTable
+// produced under QEMU/SeaBIOS). This is also why grub-mkrescue's own
+// xorriso invocation always passes -boot-info-table for this entry.
+//
+// LoadSectors, on the other hand, only matters for etfsboot.com (genisoimage
+// -boot-load-size 8: only the first 4 KiB is loaded at boot time); GRUB's
+// LoadSectors 0 derives from its real size instead, matching the UEFI GRUB
+// entry.
+func biosBootEntry(img string) iso.BootEntry {
+	e := iso.BootEntry{
+		ImagePath:     img,
+		Platform:      iso.BootPlatformX86,
+		BootInfoTable: true,
+	}
+	if img == biosBootImage {
+		e.LoadSectors = 8
+	}
+	return e
+}
 
 // isoRootKeepList is nano11builder.ps1's own hardcoded $keepList, applied as
 // its last step before it calls oscdimg: everything at the ISO root that is
@@ -97,12 +126,27 @@ type isoFlags struct {
 	keepExtras       bool   // do not remove the low-risk media extras (netfx3 cab, credits, CJK boot fonts); see removeISOExtras
 	grubEFI          string // path to an a1ive GRUB EFI application; if set, the ISO's UEFI boot entry loads GRUB (menu + wimboot) instead of Windows' boot manager (see grubBootImage)
 	skipHybridMBR    bool   // do not stamp the isohybrid MBR (see iso.Options.HybridMBR)
+	// grubBIOSHybrid and grubBIOSEltorito replace the BIOS boot entry
+	// (Windows' own etfsboot.com, which cannot run outside an El Torito
+	// CD-emulation context) with GRUB, and add the matching isohybrid MBR
+	// patch (iso.Options.LegacyBIOSMBR) so that boot entry is also reachable
+	// when the ISO is written byte-for-byte to a USB stick and booted in
+	// legacy BIOS/CSM mode. Must be given together or not at all. See
+	// contrib/grub/build-grub.sh.
+	grubBIOSHybrid   string // path to a1ive GRUB's boot_hybrid.img
+	grubBIOSEltorito string // path to the matching BIOS El Torito image (BIOS_ELTORITO_MENU.img alongside -grub-efi, BIOS_ELTORITO_SILENT.img otherwise)
 }
 
 // grubBootImagePath is where buildISO stages the GRUB UEFI El Torito boot
 // image inside the tree when -grub-efi is used. It lives under boot/ (which is
 // in isoRootKeepList) so cleanISORoot leaves it alone.
 const grubBootImagePath = "boot/grub/efi.img"
+
+// grubBIOSEltoritoPath is where buildISO stages the GRUB BIOS El Torito boot
+// image when -grub-bios-hybrid/-grub-bios-eltorito are used, matching the
+// path grub-mkrescue itself uses (util/grub-mkrescue.c's own "boot/grub/
+// i386-pc/eltorito.img"). Lives under boot/ so cleanISORoot leaves it alone.
+const grubBIOSEltoritoPath = "boot/grub/i386-pc/eltorito.img"
 
 // buildISO prepares the extracted ISO tree in place and writes a bootable
 // image from it.
@@ -189,6 +233,43 @@ func buildISO(f isoFlags) error {
 		uefiImg = grubBootImagePath
 	}
 
+	// BIOS boot image: Windows' own etfsboot.com by default, or a GRUB
+	// El Torito image (cdboot.img + core.img, built as one blob by
+	// `grub-mkimage -O i386-pc-eltorito`) when -grub-bios-hybrid/
+	// -grub-bios-eltorito are given -- see contrib/grub/build-grub.sh.
+	// etfsboot.com cannot be the answer for a USB-bootable BIOS path at all:
+	// it is built specifically for El Torito CD-emulation (it makes El
+	// Torito-specific BIOS calls assuming a virtual CD-ROM is active) and has
+	// no concept of finding/chainloading bootmgr from a raw disk by LBA, so
+	// GRUB has to be the BIOS bootstrap whenever raw-USB BIOS boot is wanted,
+	// on this path exactly as much as on the -grub-efi one.
+	biosImg := biosBootImage
+	var legacyBIOSMBR []byte
+	if (f.grubBIOSHybrid == "") != (f.grubBIOSEltorito == "") {
+		return fmt.Errorf("-grub-bios-hybrid and -grub-bios-eltorito must be given together")
+	}
+	if f.grubBIOSHybrid != "" {
+		hybrid, err := os.ReadFile(f.grubBIOSHybrid)
+		if err != nil {
+			return fmt.Errorf("read -grub-bios-hybrid %s: %w", f.grubBIOSHybrid, err)
+		}
+		legacyBIOSMBR = hybrid
+
+		eltorito, err := os.ReadFile(f.grubBIOSEltorito)
+		if err != nil {
+			return fmt.Errorf("read -grub-bios-eltorito %s: %w", f.grubBIOSEltorito, err)
+		}
+		dst := filepath.Join(f.dir, filepath.FromSlash(grubBIOSEltoritoPath))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, eltorito, 0o644); err != nil {
+			return fmt.Errorf("write GRUB BIOS El Torito image: %w", err)
+		}
+		fmt.Printf("GRUB BIOS El Torito image staged at %s (%d bytes) from %s\n", grubBIOSEltoritoPath, len(eltorito), f.grubBIOSEltorito)
+		biosImg = grubBIOSEltoritoPath
+	}
+
 	volID := f.volID
 	if volID == "" {
 		volID = "Nano11Go"
@@ -219,22 +300,25 @@ func buildISO(f isoFlags) error {
 		// about how the image boots as an ISO -- with -skip-iso-hybrid-mbr
 		// to bisect it out if some particular firmware ever balks.
 		HybridMBR: !f.skipHybridMBR,
-		BootEntries: []iso.BootEntry{{
-			// genisoimage: -b boot/etfsboot.com -no-emul-boot
-			// -boot-load-size 8 -boot-info-table.
-			ImagePath:     biosBootImage,
-			Platform:      iso.BootPlatformX86,
-			LoadSectors:   8,
-			BootInfoTable: true,
-		}, {
-			// genisoimage: -eltorito-alt-boot
-			// -e efi/microsoft/boot/efisys_noprompt.bin -no-emul-boot.
-			// LoadSectors 0 means "derive from the file's size", which is
-			// what genisoimage does without -boot-load-size: 2880 for the
-			// 1 474 560-byte efisys_noprompt.bin.
-			ImagePath: uefiImg,
-			Platform:  iso.BootPlatformUEFI,
-		}},
+		// Patches the isohybrid MBR's GRUB2 LBA field (see
+		// iso.Options.LegacyBIOSMBR) so the BIOS entry below is also
+		// reachable from a raw-written USB stick, not only optical/VM BIOS
+		// boot. nil (the zero value) when -grub-bios-hybrid isn't given,
+		// which disables the patch entirely -- same "pure addition,
+		// backward compatible" shape as HybridMBR above.
+		LegacyBIOSMBR: legacyBIOSMBR,
+		BootEntries: []iso.BootEntry{
+			biosBootEntry(biosImg),
+			{
+				// genisoimage: -eltorito-alt-boot
+				// -e efi/microsoft/boot/efisys_noprompt.bin -no-emul-boot.
+				// LoadSectors 0 means "derive from the file's size", which is
+				// what genisoimage does without -boot-load-size: 2880 for the
+				// 1 474 560-byte efisys_noprompt.bin.
+				ImagePath: uefiImg,
+				Platform:  iso.BootPlatformUEFI,
+			},
+		},
 		// genisoimage names the catalog boot.catalog at the root, which is
 		// iso.Options' zero value too; spelled out because the boot catalog
 		// path is part of what the reference image was compared against.
