@@ -96,6 +96,7 @@ type isoFlags struct {
 	skipAutounattend bool   // do not place autounattend.xml at the ISO root
 	keepExtras       bool   // do not remove the low-risk media extras (netfx3 cab, credits, CJK boot fonts); see removeISOExtras
 	grubEFI          string // path to an a1ive GRUB EFI application; if set, the ISO's UEFI boot entry loads GRUB (menu + wimboot) instead of Windows' boot manager (see grubBootImage)
+	skipHybridMBR    bool   // do not stamp the isohybrid MBR (see iso.Options.HybridMBR)
 }
 
 // grubBootImagePath is where buildISO stages the GRUB UEFI El Torito boot
@@ -208,6 +209,16 @@ func buildISO(f isoFlags) error {
 		// 4 GiB.
 		UDF:               true,
 		LargeFilesUDFOnly: true,
+		// Stamps an isohybrid MBR (see iso.Options.HybridMBR) so the image
+		// is also UEFI-bootable when written byte-for-byte to a USB stick
+		// (dd, GNOME Disks' "Restore Disk Image", Rufus in DD-image mode,
+		// etc.), not only from real/virtual optical media: USB boot
+		// enumeration looks for a GPT/MBR-partitioned disk with an EFI
+		// System Partition and has no idea what an El Torito catalog is.
+		// On by default because it is a pure addition -- it changes nothing
+		// about how the image boots as an ISO -- with -skip-iso-hybrid-mbr
+		// to bisect it out if some particular firmware ever balks.
+		HybridMBR: !f.skipHybridMBR,
 		BootEntries: []iso.BootEntry{{
 			// genisoimage: -b boot/etfsboot.com -no-emul-boot
 			// -boot-load-size 8 -boot-info-table.

@@ -238,6 +238,7 @@ func main() {
 	flag.BoolVar(&isoOpts.skipAutounattend, "skip-iso-autounattend", false, "do not place nano11's embedded autounattend.xml at the authored ISO's root")
 	flag.BoolVar(&isoOpts.keepExtras, "keep-iso-extras", false, "keep the low-risk media extras that are removed by default: the offline .NET 3.5 cab (~71 MB), Setup credits text (~18 MB), and CJK boot fonts (~27 MB) -- none of which affect install, boot, or OOBE")
 	flag.StringVar(&isoOpts.grubEFI, "grub-efi", "", "path to an a1ive GRUB EFI application (see contrib/grub/); if set, the authored ISO's UEFI boot entry loads GRUB instead of Windows' boot manager, giving a boot menu that autoprobes installed OSes and boots Windows Setup via wimboot. Optical-bootable and pure UEFI. Requires Secure Boot off; the GRUB binary is not vendored -- build it with contrib/grub/build-grub.sh")
+	flag.BoolVar(&isoOpts.skipHybridMBR, "skip-iso-hybrid-mbr", false, "do not stamp an isohybrid MBR into the authored ISO; by default one is added so the image is also UEFI-bootable when written byte-for-byte to a USB stick (dd, GNOME Disks, Rufus DD-image mode), not only from real/virtual optical media")
 	// Default "fast", not gowim's own ratio-first default: this tool's
 	// workload is re-encoding multi-gigabyte images end to end (the
 	// install.wim export pass alone re-encodes every blob of a ~7.4 GB
