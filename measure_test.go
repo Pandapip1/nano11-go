@@ -1,4 +1,4 @@
-package main
+package nano11go
 
 import (
 	"fmt"
@@ -368,7 +368,7 @@ func measureTrial(t *testing.T, env *measureEnv, patterns []string, otherStages,
 		}
 	}
 	if otherStages {
-		if err := runAggressiveFileCleanup(root, bt, newBlobs, env.arch, stageFlags{winRE: winREKeep}); err != nil {
+		if err := runAggressiveFileCleanup(root, bt, newBlobs, env.arch, DebloatOptions{WinRE: WinREKeep}); err != nil {
 			restore()
 			t.Fatal(err)
 		}

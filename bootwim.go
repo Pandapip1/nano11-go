@@ -1,4 +1,4 @@
-package main
+package nano11go
 
 import (
 	"fmt"
@@ -12,7 +12,17 @@ import (
 	"github.com/Pandapip1/gowim/wim"
 )
 
-// shrinkBootWim ports nano11builder.ps1's "Shrinking boot.wim..." step
+// BootWimOptions is the public options struct for ShrinkBootWim, mirroring
+// DebloatOptions's convention for the install.wim pass.
+type BootWimOptions struct {
+	SkipRegTweaks   bool // skip the requirement-bypass/BitLocker registry tweaks applied to the setup image
+	SkipLocaleTrim  bool // skip removing non-en-US locale directories and their owning WinSxS packages
+	SkipFileCleanup bool // skip the font/speech/enterprise-storage-driver trim
+	KeepDrivers     bool // keep boot.wim's enterprise storage/HBA drivers (see bootWimEnterpriseStoragePatterns)
+	LZX             lzx.Options
+}
+
+// ShrinkBootWim ports nano11builder.ps1's "Shrinking boot.wim..." step
 // (lines 490-534): boot.wim normally ships with 2 images (a WinPE boot
 // image, index 1, and the actual Windows Setup image, index 2); the PS1
 // script exports only index 2 into a new boot.wim, discarding the WinPE
@@ -37,7 +47,9 @@ import (
 // 25H2 boot.wim, see TODO.md). Both are genuine wins once a re-encode is
 // already happening for another reason; neither is worth forcing a
 // re-encode on its own merits alone.
-func shrinkBootWim(bootWimPath, outPath string, skipRegTweaks, skipLocaleTrim, skipFileCleanup, keepDrivers bool, lzxOpts lzx.Options) error {
+func ShrinkBootWim(bootWimPath, outPath string, opts BootWimOptions) error {
+	skipRegTweaks, skipLocaleTrim, skipFileCleanup, keepDrivers, lzxOpts :=
+		opts.SkipRegTweaks, opts.SkipLocaleTrim, opts.SkipFileCleanup, opts.KeepDrivers, opts.LZX
 	f, err := os.Open(bootWimPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", bootWimPath, err)

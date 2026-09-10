@@ -1,4 +1,4 @@
-package main
+package nano11go
 
 import (
 	"crypto/sha1"

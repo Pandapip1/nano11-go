@@ -1,4 +1,4 @@
-package main
+package nano11go
 
 import (
 	_ "embed"

@@ -1,4 +1,4 @@
-package main
+package nano11go
 
 import (
 	"crypto/rand"
@@ -450,23 +450,23 @@ var imeDirsToRemove = []string{"IMEJP", "IMETC", "IMEKR"}
 // definition files. Every step is best-effort (matches the PS script's own
 // pervasive -ErrorAction SilentlyContinue): a missing file/folder is not
 // an error.
-// winREMode selects what runAggressiveFileCleanup does to winre.wim -- see
+// WinREMode selects what runAggressiveFileCleanup does to winre.wim -- see
 // its call site's doc comment for why this isn't just a bool.
-type winREMode int
+type WinREMode int
 
 const (
-	winREKeep winREMode = iota
-	winREDonorStub
+	WinREKeep WinREMode = iota
+	WinREDonorStub
 )
 
-func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs map[wim.Hash][]byte, arch string, stages stageFlags) error {
-	winRE, winREDonorPath, lzxOpts := stages.winRE, stages.winREDonorPath, stages.lzx
+func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs map[wim.Hash][]byte, arch string, stages DebloatOptions) error {
+	winRE, winREDonorPath, lzxOpts := stages.WinRE, stages.WinREDonorPath, stages.LZX
 	fmt.Println("Removing pre-compiled .NET assemblies (Native Images)...")
 	if err := removeMatchingChildren(root, bt, winDir+`\assembly`, []string{"NativeImages_*"}, "native images"); err != nil {
 		return err
 	}
 
-	if stages.keepDrivers {
+	if stages.KeepDrivers {
 		fmt.Println("Keeping non-NIC DriverStore driver classes (-keep-drivers)")
 	} else {
 		fmt.Println("Slimming the DriverStore...")
@@ -475,7 +475,7 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 		}
 	}
 
-	if stages.keepNICDrivers {
+	if stages.KeepNICDrivers {
 		fmt.Println("Keeping vendor network adapter drivers (-keep-nic-drivers)")
 	} else {
 		fmt.Println("Removing vendor network adapter drivers (no NIC support for unlisted hardware)...")
@@ -616,7 +616,7 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	for _, ime := range imeDirsToRemove {
 		mustRemove = append(mustRemove, winDir+`\System32\IME\`+ime)
 	}
-	if stages.removeIME {
+	if stages.RemoveIME {
 		// -remove-ime clears ALL remaining input-method payload (~21 MB) for
 		// an image that only ever types Latin script. Basic keyboard input
 		// uses the kbd*.dll layouts (untouched); everything here is the CJK
@@ -685,7 +685,7 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	// ESSENTIAL tier: kept by default because removal breaks OOBE; each is
 	// opt-in for images that will never run OOBE (captured/generalized
 	// downstream). edgehtml.dll ~46 MB, CoreAI ~19 MB.
-	if stages.removeWebEngines {
+	if stages.RemoveWebEngines {
 		fmt.Println("Removing edgehtml.dll (-remove-web-engines; breaks OOBE -- see comment)")
 		for _, path := range []string{winDir + `\System32\edgehtml.dll`, winDir + `\SysWOW64\edgehtml.dll`} {
 			if err := removeIfExists(root, bt, path); err != nil {
@@ -693,13 +693,13 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 			}
 		}
 	}
-	if stages.removeAI {
+	if stages.RemoveAI {
 		fmt.Println("Removing CoreAI SystemApp (-remove-ai; breaks OOBE -- see comment)")
 		if err := removeIfExists(root, bt, winDir+`\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy`); err != nil {
 			return fmt.Errorf("remove essential AI component: %w", err)
 		}
 	}
-	if stages.removeAIFoundation {
+	if stages.RemoveAIFoundation {
 		// The Windows AI Foundation / Copilot Runtime: the on-device
 		// generative-AI stack (Phi Silica, image generation, semantic search,
 		// content moderation) hosted by the "vNext" app runtime, plus the
@@ -775,9 +775,9 @@ func runAggressiveFileCleanup(root *wim.DirEntry, bt *wim.BlobTable, newBlobs ma
 	//     winREStubFromDonor/winREStubIncludePaths) rather than guessing
 	//     everything needed up front.
 	switch winRE {
-	case winREKeep:
+	case WinREKeep:
 		fmt.Println("Keeping winre.wim intact (-winre-mode=keep; forgoes the ~606 MB donor-stub saving)")
-	case winREDonorStub:
+	case WinREDonorStub:
 		fmt.Printf("Replacing winre.wim with a stub grafted from %s (default; ~606 MB saving, validated by a real install)...\n", winREDonorPath)
 		stub, err := winREStubFromDonor(winREDonorPath, lzxOpts)
 		if err != nil {

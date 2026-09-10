@@ -1,4 +1,4 @@
-package main
+package nano11go
 
 import (
 	"fmt"
@@ -114,73 +114,74 @@ var isoRootKeepList = []string{
 	"autounattend.xml",
 }
 
-// isoFlags collects the ISO-authoring stage's settings, mirroring the
-// stageFlags convention used by the debloat stages.
-type isoFlags struct {
-	dir              string // extracted ISO tree to author from, modified in place
-	out              string // output .iso path
-	volID            string // ECMA-119 Volume Identifier / UDF volume label
-	installWim       string // install.wim to place at sources/install.wim
-	bootWim          string // boot.wim to place at sources/boot.wim
-	skipAutounattend bool   // do not place autounattend.xml at the ISO root
-	keepExtras       bool   // do not remove the low-risk media extras (netfx3 cab, credits, CJK boot fonts); see removeISOExtras
-	grubEFI          string // path to an a1ive GRUB EFI application; if set, the ISO's UEFI boot entry loads GRUB (menu + wimboot) instead of Windows' boot manager (see grubBootImage)
-	skipHybridMBR    bool   // do not stamp the isohybrid MBR (see iso.Options.HybridMBR)
-	// grubBIOSHybrid and grubBIOSEltorito replace the BIOS boot entry
+// ISOOptions collects the ISO-authoring stage's settings: the public options
+// struct for BuildISO, mirroring DebloatOptions/BootWimOptions's convention
+// for the other two pipeline stages.
+type ISOOptions struct {
+	Dir              string // extracted ISO tree to author from, modified in place
+	Out              string // output .iso path
+	VolID            string // ECMA-119 Volume Identifier / UDF volume label
+	InstallWim       string // install.wim to place at sources/install.wim
+	BootWim          string // boot.wim to place at sources/boot.wim
+	SkipAutounattend bool   // do not place autounattend.xml at the ISO root
+	KeepExtras       bool   // do not remove the low-risk media extras (netfx3 cab, credits, CJK boot fonts); see removeISOExtras
+	GrubEFI          string // path to an a1ive GRUB EFI application; if set, the ISO's UEFI boot entry loads GRUB (menu + wimboot) instead of Windows' boot manager (see grubBootImage)
+	SkipHybridMBR    bool   // do not stamp the isohybrid MBR (see iso.Options.HybridMBR)
+	// GrubBIOSHybrid and GrubBIOSEltorito replace the BIOS boot entry
 	// (Windows' own etfsboot.com, which cannot run outside an El Torito
 	// CD-emulation context) with GRUB, and add the matching isohybrid MBR
 	// patch (iso.Options.LegacyBIOSMBR) so that boot entry is also reachable
 	// when the ISO is written byte-for-byte to a USB stick and booted in
 	// legacy BIOS/CSM mode. Must be given together or not at all. See
 	// contrib/grub/build-grub.sh.
-	grubBIOSHybrid   string // path to a1ive GRUB's boot_hybrid.img
-	grubBIOSEltorito string // path to the matching BIOS El Torito image (BIOS_ELTORITO_MENU.img alongside -grub-efi, BIOS_ELTORITO_SILENT.img otherwise)
+	GrubBIOSHybrid   string // path to a1ive GRUB's boot_hybrid.img
+	GrubBIOSEltorito string // path to the matching BIOS El Torito image (BIOS_ELTORITO_MENU.img alongside -grub-efi, BIOS_ELTORITO_SILENT.img otherwise)
 }
 
-// grubBootImagePath is where buildISO stages the GRUB UEFI El Torito boot
+// grubBootImagePath is where BuildISO stages the GRUB UEFI El Torito boot
 // image inside the tree when -grub-efi is used. It lives under boot/ (which is
 // in isoRootKeepList) so cleanISORoot leaves it alone.
 const grubBootImagePath = "boot/grub/efi.img"
 
-// grubBIOSEltoritoPath is where buildISO stages the GRUB BIOS El Torito boot
+// grubBIOSEltoritoPath is where BuildISO stages the GRUB BIOS El Torito boot
 // image when -grub-bios-hybrid/-grub-bios-eltorito are used, matching the
 // path grub-mkrescue itself uses (util/grub-mkrescue.c's own "boot/grub/
 // i386-pc/eltorito.img"). Lives under boot/ so cleanISORoot leaves it alone.
 const grubBIOSEltoritoPath = "boot/grub/i386-pc/eltorito.img"
 
-// buildISO prepares the extracted ISO tree in place and writes a bootable
+// BuildISO prepares the extracted ISO tree in place and writes a bootable
 // image from it.
 //
 // The tree preparation steps are the ones nano11builder.ps1 performs on the
 // media it is about to hand to oscdimg, and they are done here rather than
 // left to the caller so that the whole "produce a bootable nano11 ISO"
 // operation is one program.
-func buildISO(f isoFlags) error {
-	if f.out == "" {
+func BuildISO(f ISOOptions) error {
+	if f.Out == "" {
 		return fmt.Errorf("-iso-out is required when -iso-dir is given")
 	}
-	if f.installWim != "" {
-		dst := filepath.Join(f.dir, "sources", "install.wim")
-		fmt.Printf("Placing %s at sources/install.wim\n", f.installWim)
-		if err := copyFileInto(f.installWim, dst); err != nil {
+	if f.InstallWim != "" {
+		dst := filepath.Join(f.Dir, "sources", "install.wim")
+		fmt.Printf("Placing %s at sources/install.wim\n", f.InstallWim)
+		if err := copyFileInto(f.InstallWim, dst); err != nil {
 			return err
 		}
 	}
-	if f.bootWim != "" {
-		dst := filepath.Join(f.dir, "sources", "boot.wim")
-		fmt.Printf("Placing %s at sources/boot.wim\n", f.bootWim)
-		if err := copyFileInto(f.bootWim, dst); err != nil {
+	if f.BootWim != "" {
+		dst := filepath.Join(f.Dir, "sources", "boot.wim")
+		fmt.Printf("Placing %s at sources/boot.wim\n", f.BootWim)
+		if err := copyFileInto(f.BootWim, dst); err != nil {
 			return err
 		}
 	}
 
 	// __chunk_data is an artifact of extracting the source ISO with 7z, not
 	// part of the real media; it would otherwise be recorded into the image.
-	if err := os.Remove(filepath.Join(f.dir, "__chunk_data")); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(filepath.Join(f.Dir, "__chunk_data")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
-	if !f.skipAutounattend {
+	if !f.SkipAutounattend {
 		// nano11 keeps its own autounattend.xml at the ISO root (that is why
 		// the keepList above names it) for unattended boot-time Setup,
 		// separate from the copy installAutounattend places at
@@ -188,17 +189,17 @@ func buildISO(f isoFlags) error {
 		// Both come from the same embedded copy, so the two can no longer
 		// drift apart the way they could when the ISO copy was made by a
 		// shell script pointed at a path.
-		if err := os.WriteFile(filepath.Join(f.dir, "autounattend.xml"), autounattendXML, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(f.Dir, "autounattend.xml"), autounattendXML, 0o644); err != nil {
 			return err
 		}
 	}
 
-	if err := cleanISORoot(f.dir); err != nil {
+	if err := cleanISORoot(f.Dir); err != nil {
 		return err
 	}
 
-	if !f.keepExtras {
-		if err := removeISOExtras(f.dir); err != nil {
+	if !f.KeepExtras {
+		if err := removeISOExtras(f.Dir); err != nil {
 			return fmt.Errorf("remove ISO extras: %w", err)
 		}
 	}
@@ -213,23 +214,23 @@ func buildISO(f isoFlags) error {
 	// as Windows' native etfsboot.com -- an i386-pc GRUB image would be needed
 	// to put GRUB in front of BIOS boot too. See contrib/grub/.
 	uefiImg := uefiBootImage
-	if f.grubEFI != "" {
-		grub, err := os.ReadFile(f.grubEFI)
+	if f.GrubEFI != "" {
+		grub, err := os.ReadFile(f.GrubEFI)
 		if err != nil {
-			return fmt.Errorf("read -grub-efi %s: %w", f.grubEFI, err)
+			return fmt.Errorf("read -grub-efi %s: %w", f.GrubEFI, err)
 		}
 		fatImg, err := buildGrubFATImage(grub)
 		if err != nil {
 			return fmt.Errorf("build GRUB boot image: %w", err)
 		}
-		dst := filepath.Join(f.dir, filepath.FromSlash(grubBootImagePath))
+		dst := filepath.Join(f.Dir, filepath.FromSlash(grubBootImagePath))
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
 		if err := os.WriteFile(dst, fatImg, 0o644); err != nil {
 			return fmt.Errorf("write GRUB boot image: %w", err)
 		}
-		fmt.Printf("GRUB UEFI boot image staged at %s (%d bytes) from %s\n", grubBootImagePath, len(fatImg), f.grubEFI)
+		fmt.Printf("GRUB UEFI boot image staged at %s (%d bytes) from %s\n", grubBootImagePath, len(fatImg), f.GrubEFI)
 		uefiImg = grubBootImagePath
 	}
 
@@ -245,36 +246,36 @@ func buildISO(f isoFlags) error {
 	// on this path exactly as much as on the -grub-efi one.
 	biosImg := biosBootImage
 	var legacyBIOSMBR []byte
-	if (f.grubBIOSHybrid == "") != (f.grubBIOSEltorito == "") {
+	if (f.GrubBIOSHybrid == "") != (f.GrubBIOSEltorito == "") {
 		return fmt.Errorf("-grub-bios-hybrid and -grub-bios-eltorito must be given together")
 	}
-	if f.grubBIOSHybrid != "" {
-		hybrid, err := os.ReadFile(f.grubBIOSHybrid)
+	if f.GrubBIOSHybrid != "" {
+		hybrid, err := os.ReadFile(f.GrubBIOSHybrid)
 		if err != nil {
-			return fmt.Errorf("read -grub-bios-hybrid %s: %w", f.grubBIOSHybrid, err)
+			return fmt.Errorf("read -grub-bios-hybrid %s: %w", f.GrubBIOSHybrid, err)
 		}
 		legacyBIOSMBR = hybrid
 
-		eltorito, err := os.ReadFile(f.grubBIOSEltorito)
+		eltorito, err := os.ReadFile(f.GrubBIOSEltorito)
 		if err != nil {
-			return fmt.Errorf("read -grub-bios-eltorito %s: %w", f.grubBIOSEltorito, err)
+			return fmt.Errorf("read -grub-bios-eltorito %s: %w", f.GrubBIOSEltorito, err)
 		}
-		dst := filepath.Join(f.dir, filepath.FromSlash(grubBIOSEltoritoPath))
+		dst := filepath.Join(f.Dir, filepath.FromSlash(grubBIOSEltoritoPath))
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
 		if err := os.WriteFile(dst, eltorito, 0o644); err != nil {
 			return fmt.Errorf("write GRUB BIOS El Torito image: %w", err)
 		}
-		fmt.Printf("GRUB BIOS El Torito image staged at %s (%d bytes) from %s\n", grubBIOSEltoritoPath, len(eltorito), f.grubBIOSEltorito)
+		fmt.Printf("GRUB BIOS El Torito image staged at %s (%d bytes) from %s\n", grubBIOSEltoritoPath, len(eltorito), f.GrubBIOSEltorito)
 		biosImg = grubBIOSEltoritoPath
 	}
 
-	volID := f.volID
+	volID := f.VolID
 	if volID == "" {
 		volID = "Nano11Go"
 	}
-	fmt.Printf("Authoring %s from %s (volume ID %q)...\n", f.out, f.dir, volID)
+	fmt.Printf("Authoring %s from %s (volume ID %q)...\n", f.Out, f.Dir, volID)
 	start := time.Now()
 
 	b := iso.New(&iso.Options{
@@ -299,7 +300,7 @@ func buildISO(f isoFlags) error {
 		// On by default because it is a pure addition -- it changes nothing
 		// about how the image boots as an ISO -- with -skip-iso-hybrid-mbr
 		// to bisect it out if some particular firmware ever balks.
-		HybridMBR: !f.skipHybridMBR,
+		HybridMBR: !f.SkipHybridMBR,
 		// Patches the isohybrid MBR's GRUB2 LBA field (see
 		// iso.Options.LegacyBIOSMBR) so the BIOS entry below is also
 		// reachable from a raw-written USB stick, not only optical/VM BIOS
@@ -327,22 +328,22 @@ func buildISO(f isoFlags) error {
 		// drives whose read-ahead runs past the recorded area. Nothing here
 		// is burned to CD-R, and ECMA-119 does not require it.
 	})
-	if err := b.AddTree("", f.dir); err != nil {
-		return fmt.Errorf("read %s: %w", f.dir, err)
+	if err := b.AddTree("", f.Dir); err != nil {
+		return fmt.Errorf("read %s: %w", f.Dir, err)
 	}
-	out, err := os.Create(f.out)
+	out, err := os.Create(f.Out)
 	if err != nil {
 		return err
 	}
 	n, err := b.WriteTo(out)
 	if err != nil {
 		out.Close()
-		return fmt.Errorf("write %s: %w", f.out, err)
+		return fmt.Errorf("write %s: %w", f.Out, err)
 	}
 	if err := out.Close(); err != nil {
 		return err
 	}
-	fmt.Printf("Wrote %s (%d bytes) in %s\n", f.out, n, time.Since(start).Round(time.Millisecond))
+	fmt.Printf("Wrote %s (%d bytes) in %s\n", f.Out, n, time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
