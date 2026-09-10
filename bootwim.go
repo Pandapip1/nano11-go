@@ -31,7 +31,7 @@ type BootWimOptions struct {
 // The PS1 script does its export/registry-edit/re-export as two DISM
 // /Export-Image passes around an intervening mount; this port instead
 // exports once to an in-memory image, edits the registry hives directly
-// (mirroring main.go's own install.wim flow), and writes the final result
+// (mirroring Debloat's own install.wim flow), and writes the final result
 // in one pass.
 //
 // Both the WinPE-image drop and the non-en-US locale/WinSxS trim below

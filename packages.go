@@ -16,7 +16,7 @@ import (
 // servicing\Packages\*.mum file's own base name) exactly like the
 // PowerShell `$_ -like "$packagePattern*"` check against `dism
 // /Get-Packages`'s output. "$languageCode" entries are filled in from the
-// image's own default UI language (see main.go) rather than assumed.
+// image's own default UI language (see debloat.go's Debloat) rather than assumed.
 //
 // Per the original script's own section comments, several of these are
 // explicitly acknowledged there as aggressive/breakage-causing (Windows

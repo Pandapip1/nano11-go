@@ -223,7 +223,7 @@ func TestMeasure(t *testing.T) {
 	}
 
 	// Reference points. "pristine" is the untouched image; "current" is the
-	// pipeline exactly as main.go runs it today (for an absolute number that
+	// pipeline exactly as Debloat runs it today (for an absolute number that
 	// can be compared against a real run); "base" is the pipeline with the
 	// candidate-overlapping patterns removed, which is what every candidate
 	// delta is measured against.
