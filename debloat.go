@@ -127,6 +127,18 @@ type DebloatOptions struct {
 	// ladder). The zero value is lzx.Options{}'s own zero value, not a
 	// usable preset -- callers should set this explicitly (e.g. lzx.Fast()).
 	LZX lzx.Options
+
+	// GrubPostInstallEFI, if non-empty, is a prebuilt GRUB x86_64-efi
+	// standalone application (see grubpostinstall.go and cmd/nano11-go's
+	// -grub-postinstall flag for the module list/config it must embed).
+	// When set, Debloat stages it plus a SetupComplete.cmd/install-grub.ps1
+	// pair into the image so that, on first boot after Setup completes,
+	// GRUB -- not bootmgfw.efi directly -- becomes the firmware's default
+	// boot target, chainloading Setup's own (renamed) bootmgfw.efi to
+	// actually start Windows. Independent of SkipRegTweaks/autounattend.xml
+	// installation: this is a live-Setup-run hook (SetupComplete.cmd), not a
+	// registry/unattend tweak.
+	GrubPostInstallEFI []byte
 }
 
 // Debloat runs the full install.wim debloat pass against the image at
@@ -316,6 +328,12 @@ func Debloat(wimPath, outPath string, imageIndex int, opts DebloatOptions) error
 		}
 		if err := installAutounattend(root, bt2, newBlobs); err != nil {
 			return fmt.Errorf("install autounattend.xml: %w", err)
+		}
+	}
+
+	if len(opts.GrubPostInstallEFI) > 0 {
+		if err := installGRUBPostInstall(root, bt2, newBlobs, opts.GrubPostInstallEFI); err != nil {
+			return fmt.Errorf("install post-install GRUB bootloader: %w", err)
 		}
 	}
 

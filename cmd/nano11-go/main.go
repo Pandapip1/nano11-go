@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 
 	nano11go "github.com/Pandapip1/nano11-go"
 
@@ -163,6 +164,23 @@ func main() {
 	flag.StringVar(&isoOpts.GrubBIOSHybrid, "grub-bios-hybrid", "", "path to a1ive GRUB's boot_hybrid.img (see contrib/grub/build-grub.sh); together with -grub-bios-eltorito, replaces the BIOS boot entry with GRUB (Windows' own etfsboot.com cannot run outside an El Torito CD-emulation context, so it can never be USB-bootable in BIOS mode) and patches the isohybrid MBR so that entry is also reachable from a raw-written USB stick, not just optical/VM BIOS boot")
 	flag.StringVar(&isoOpts.GrubBIOSEltorito, "grub-bios-eltorito", "", "path to the GRUB BIOS El Torito image to pair with -grub-bios-hybrid: contrib/grub/BIOS_ELTORITO_MENU.img (the same autoprobe/wimboot/memtest/fwsetup menu as -grub-efi, now BIOS-reachable too) when also using -grub-efi, or BIOS_ELTORITO_SILENT.img otherwise (silently wimboots straight to Setup, matching today's Windows-direct-boot behavior but now from a raw USB stick in BIOS mode too)")
 
+	// Distinct from -grub-efi/-grub-bios-*: those put GRUB on the install
+	// MEDIA as a front-end that boots Setup (needs a1ive's fork, for
+	// wimboot's optical-media boot.wim access). This instead makes GRUB the
+	// INSTALLED SYSTEM's own persistent bootloader after Setup finishes --
+	// stock GRUB is enough for this (chainloading an already-installed,
+	// already-on-a-real-FAT32-ESP bootmgfw.efi needs no wimboot at all), and
+	// it is baked into install.wim itself (grubpostinstall.go), not the ISO
+	// media, since it must survive after the install disc is gone. See
+	// grubpostinstall.go for the SetupComplete.cmd/bcdedit mechanism. Build
+	// with e.g.:
+	//   grub-mkstandalone -O x86_64-efi \
+	//     --modules="part_gpt part_msdos fat search search_fs_file chain" \
+	//     -o grubx64.efi "boot/grub/grub.cfg=<cfg unconditionally running: \
+	//     search --no-floppy --file --set=root /EFI/Microsoft/Boot/bootmgfw-orig.efi; \
+	//     chainloader /EFI/Microsoft/Boot/bootmgfw-orig.efi; boot>"
+	grubPostInstallPath := flag.String("grub-postinstall", "", "path to a prebuilt GRUB x86_64-efi standalone application (stock GRUB is sufficient; see this flag's doc comment in main.go for the exact grub-mkstandalone invocation and embedded grub.cfg); if set, stages it plus a SetupComplete.cmd + install-grub.ps1 into install.wim so GRUB becomes the ESP's default boot target after Setup completes, chainloading Windows' own (renamed) bootmgfw.efi")
+
 	// Default "fast", not gowim's own ratio-first default: this tool's
 	// workload is re-encoding multi-gigabyte images end to end (the
 	// install.wim export pass alone re-encodes every blob of a ~7.4 GB
@@ -218,6 +236,14 @@ func main() {
 	// case: the debloat costs tens of minutes, the ISO a few seconds).
 	if *wimPath == "" && *bootWimPath == "" && isoOpts.Dir == "" {
 		log.Fatal("-wim is required")
+	}
+
+	if *grubPostInstallPath != "" {
+		data, err := os.ReadFile(*grubPostInstallPath)
+		if err != nil {
+			log.Fatalf("-grub-postinstall: %v", err)
+		}
+		opts.GrubPostInstallEFI = data
 	}
 
 	if *wimPath != "" {
