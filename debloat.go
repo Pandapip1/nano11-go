@@ -126,7 +126,20 @@ type DebloatOptions struct {
 	// every WIM this pass writes (see the gowim lzx package's preset
 	// ladder). The zero value is lzx.Options{}'s own zero value, not a
 	// usable preset -- callers should set this explicitly (e.g. lzx.Fast()).
+	// Ignored entirely when NoCompression is set.
 	LZX lzx.Options
+	// NoCompression skips LZX entirely (wim.CompressionNone) for every WIM
+	// this pass writes - both the final debloated output and the scratch
+	// tmpExport intermediate. For a throwaway, single-boot Packer build
+	// artifact there is nothing to gain from spending CPU time compressing
+	// it and a lot to lose: LZX-recompressing a multi-GB install.wim was
+	// confirmed on a live builder to take well over two hours of CPU time
+	// even with the "fast"/"none" lzx_preset (that preset only controls
+	// the LZX encoder's own effort level - the WIM still goes through real
+	// LZX encoding either way), versus a few seconds uncompressed. Even
+	// the "none" LZX preset still means real (if minimal-effort) LZX
+	// encoding; this is the only way to skip compression outright.
+	NoCompression bool
 
 	// GrubPostInstallEFI, if non-empty, is a prebuilt GRUB x86_64-efi
 	// standalone application (see grubpostinstall.go and cmd/nano11-go's
@@ -202,7 +215,7 @@ func Debloat(wimPath, outPath string, imageIndex int, opts DebloatOptions) error
 	tmpExport := outPath + ".export.tmp"
 	if fi, err := os.Stat(tmpExport); err == nil && fi.Size() > 0 {
 		fmt.Printf("reusing existing export at %s\n", tmpExport)
-	} else if err := exportImage(r, bt, xmlData, imageIndex, tmpExport, opts.LZX); err != nil {
+	} else if err := exportImage(r, bt, xmlData, imageIndex, tmpExport, opts.LZX, opts.NoCompression); err != nil {
 		return fmt.Errorf("export image %d: %w", imageIndex, err)
 	}
 
@@ -384,9 +397,13 @@ func Debloat(wimPath, outPath string, imageIndex int, opts DebloatOptions) error
 	}
 	defer out.Close()
 
+	compressionType := wim.CompressionType(wim.HdrFlagCompressLZX)
+	if opts.NoCompression {
+		compressionType = wim.CompressionNone
+	}
 	src := combinedBlobSource{overrides: newBlobs, fallback: wim.NewReaderBlobSource(r2, bt2)}
 	_, err = wim.WriteTo(out, []*wim.ImageMetadata{meta}, rebuiltBT, xmlData2, src, wim.WriteOptions{
-		CompressionType: wim.HdrFlagCompressLZX,
+		CompressionType: compressionType,
 		ChunkSize:       32768,
 		BootIndex:       1,
 		GUID:            randomGUID(),
@@ -400,14 +417,18 @@ func Debloat(wimPath, outPath string, imageIndex int, opts DebloatOptions) error
 	return nil
 }
 
-func exportImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData, index int, dest string, lzxOpts lzx.Options) error {
+func exportImage(r *wim.Reader, bt *wim.BlobTable, xmlData *wim.XMLData, index int, dest string, lzxOpts lzx.Options, noCompression bool) error {
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	compressionType := wim.CompressionType(wim.HdrFlagCompressLZX)
+	if noCompression {
+		compressionType = wim.CompressionNone
+	}
 	_, err = wim.ExportImage(r, bt, xmlData, []int{index}, f, wim.WriteOptions{
-		CompressionType: wim.HdrFlagCompressLZX,
+		CompressionType: compressionType,
 		ChunkSize:       32768,
 		GUID:            randomGUID(),
 		LZXOptions:      lzxOpts,
